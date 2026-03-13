@@ -1,0 +1,75 @@
+import { parsePipeList } from "./utils.js";
+
+function readEnv(name, fallback = "") {
+  return process.env[name] || fallback;
+}
+
+function readBool(name, fallback = false) {
+  const value = String(readEnv(name, fallback ? "true" : "false")).trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(value);
+}
+
+export const CONFIG = {
+  nodeEnv: readEnv("NODE_ENV", "development"),
+  appName: readEnv("APP_NAME", "Matbakh Al Youm Smart Kitchen"),
+  baseUrl: readEnv("APP_BASE_URL", "http://localhost:10000"),
+  port: Number(readEnv("PORT", "10000")),
+  timezone: readEnv("TIMEZONE", "Asia/Amman"),
+
+  business: {
+    name: readEnv("BUSINESS_NAME", "مطبخ اليوم المركزي"),
+    phone: readEnv("BUSINESS_PHONE", "962779960015"),
+    whatsapp: readEnv("BUSINESS_WHATSAPP", "962779960015"),
+    site: readEnv("BUSINESS_SITE", "https://matbakh-alyoum.site"),
+    address: readEnv("BUSINESS_ADDRESS", "عمّان - أم السماق"),
+    currency: readEnv("CURRENCY", "JOD")
+  },
+
+  wa: {
+    graphVersion: readEnv("META_GRAPH_VERSION", "v22.0"),
+    accessToken: readEnv("WHATSAPP_ACCESS_TOKEN"),
+    phoneNumberId: readEnv("WHATSAPP_PHONE_NUMBER_ID"),
+    verifyToken: readEnv("WHATSAPP_VERIFY_TOKEN"),
+    adminNumbers: parsePipeList(readEnv("WA_ADMIN_NUMBERS", "962779960015"), ",")
+  },
+
+  orderFlow: {
+    timeSlots: parsePipeList(
+      readEnv("AVAILABLE_TIME_SLOTS", "11:00-13:00|13:00-15:00|15:00-17:00|17:00-19:00|19:00-21:00"),
+      "|"
+    ),
+    sameDayCutoffHour: Number(readEnv("SAME_DAY_CUTOFF_HOUR", "17")),
+    approvalModeDefault: readEnv("APPROVAL_MODE_DEFAULT", "MANUAL_ONLY"),
+    delayedCustomerPhone: readEnv("DELAYED_CUSTOMER_PHONE", "962779960015"),
+    delayedCustomerMessageEnabled: readBool("DELAYED_CUSTOMER_MESSAGE_ENABLED", true),
+    staffBookingPhone: readEnv("STAFF_BOOKING_PHONE", "962779960015"),
+    enableAbandonedReminder: readBool("ENABLE_ABANDONED_REMINDER", true),
+    abandonedReminderMinMinutes: Number(readEnv("ABANDONED_REMINDER_MIN_MINUTES", "15")),
+    abandonedReminderMaxMinutes: Number(readEnv("ABANDONED_REMINDER_MAX_MINUTES", "25")),
+    reminderLoopSeconds: Number(readEnv("REMINDER_LOOP_SECONDS", "60")),
+    followupLoopSeconds: Number(readEnv("FOLLOWUP_LOOP_SECONDS", "120"))
+  },
+
+  marketing: {
+    defaultHashtags: parsePipeList(readEnv("DEFAULT_MARKETING_HASHTAGS", "#مطبخ|#اليوم|#المركزي"), "|"),
+    sendRetargetingEnabled: readBool("SEND_RETARGETING_ENABLED", false)
+  },
+
+  supabase: {
+    url: readEnv("SUPABASE_URL"),
+    anonKey: readEnv("SUPABASE_ANON_KEY"),
+    serviceRoleKey: readEnv("SUPABASE_SERVICE_ROLE_KEY")
+  },
+
+  adminDashboardToken: readEnv("ADMIN_DASHBOARD_TOKEN", "CHANGE_ME")
+};
+
+export function isConfigured() {
+  return Boolean(
+    CONFIG.wa.accessToken &&
+      CONFIG.wa.phoneNumberId &&
+      CONFIG.wa.verifyToken &&
+      CONFIG.supabase.url &&
+      CONFIG.supabase.serviceRoleKey
+  );
+}

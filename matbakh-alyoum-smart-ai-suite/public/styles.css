@@ -1,0 +1,131 @@
+* { box-sizing: border-box; }
+:root{
+  --bg:#f7f4ee;
+  --surface:#ffffff;
+  --text:#1d2b28;
+  --muted:#5d6e68;
+  --brand:#0f4a43;
+  --brand-2:#b9802d;
+  --line:#e5ddd2;
+}
+html,body{
+  margin:0;
+  padding:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family: Tahoma, Arial, sans-serif;
+  line-height:1.8;
+}
+a{ color:inherit; text-decoration:none; }
+.container{
+  width:min(1100px, 92%);
+  margin-inline:auto;
+}
+.topbar{
+  background:var(--brand);
+  color:#fff;
+  padding:10px 0;
+  font-size:14px;
+}
+.topbar .container{
+  display:flex;
+  justify-content:space-between;
+  gap:16px;
+  flex-wrap:wrap;
+}
+.hero{
+  padding:56px 0 28px;
+}
+.grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(260px,1fr));
+  gap:20px;
+}
+.card{
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:18px;
+  padding:20px;
+  box-shadow:0 8px 24px rgba(0,0,0,.04);
+}
+.hero h1{
+  margin:0 0 10px;
+  font-size:42px;
+  line-height:1.25;
+}
+.hero p{
+  color:var(--muted);
+  margin:0 0 20px;
+  font-size:18px;
+}
+.cta-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  margin-top:16px;
+}
+.btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:12px 18px;
+  border-radius:14px;
+  border:1px solid var(--brand);
+  background:var(--brand);
+  color:#fff;
+  font-weight:700;
+}
+.btn.secondary{
+  background:#fff;
+  color:var(--brand);
+}
+.section{
+  padding:20px 0 34px;
+}
+.section h2{
+  font-size:28px;
+  margin:0 0 12px;
+}
+.badge{
+  display:inline-block;
+  padding:6px 10px;
+  border-radius:999px;
+  background:#edf7f5;
+  color:var(--brand);
+  font-size:13px;
+  margin-bottom:8px;
+}
+.menu-item h3{
+  margin:0 0 6px;
+}
+.price{
+  color:var(--brand-2);
+  font-weight:700;
+}
+footer{
+  padding:28px 0 40px;
+  color:var(--muted);
+}
+.nav{
+  padding:18px 0;
+}
+.nav .container{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:16px;
+  flex-wrap:wrap;
+}
+.nav-links{
+  display:flex;
+  gap:14px;
+  flex-wrap:wrap;
+}
+.notice{
+  background:#fff8eb;
+  border:1px solid #f1d7a5;
+  border-radius:14px;
+  padding:14px;
+}
+.small{font-size:14px;color:var(--muted);}
+.list-reset{list-style:none;padding:0;margin:0;}
