@@ -1,5 +1,3 @@
-import axios from "axios";
-import { CONFIG, isInsideOperatingWindow } from "./config.js";
 import {
   clearChatState,
   createCustomerIfMissing,
@@ -7,11 +5,18 @@ import {
   detectLanguage,
   getKnowledgeAnswer,
   logConversation,
-  normalizePhone,
   readChatState,
   saveCustomerFact,
   writeChatState,
 } from "./supabase.js";
+
+import {
+  sendButtonsMessage,
+  sendListMessage,
+  sendTextMessage,
+} from "./whatsapp-interactive.js";
+
+import { CONFIG, isInsideOperatingWindow } from "./config.js";
 
 function tr(lang, ar, en) {
   return lang === "en" ? en : ar;
@@ -21,101 +26,70 @@ function cleanText(text = "") {
   return String(text).replace(/\s+/g, " ").trim();
 }
 
-function splitCombinedMessage(text = "") {
-  return String(text)
-    .split(/\n+/)
-    .map((s) => cleanText(s))
-    .filter(Boolean);
-}
-
-function isGreeting(text = "") {
-  return /^(مرحبا|السلام عليكم|هلا|أهلا|اهلا|hello|hi)\b/i.test(cleanText(text));
-}
-
-function isOrderIntent(text = "") {
-  return /(بدي|اريد|أريد|بدنا|طلب|اطلب|مقلوبة|ورق عنب|ملفوف|كوسا|باذنجان|مفتول|يالنجي|محاشي)/i.test(
-    cleanText(text)
-  );
-}
-
-function parseDish(text = "") {
-  const t = cleanText(text);
-
-  if (/مقلوبة/i.test(t)) return "مقلوبة";
-  if (/ورق عنب/i.test(t)) return "ورق عنب";
-  if (/ملفوف/i.test(t)) return "ملفوف";
-  if (/كوسا/i.test(t)) return "كوسا";
-  if (/باذنجان/i.test(t)) return "باذنجان";
-  if (/مفتول/i.test(t)) return "مفتول";
-  if (/يالنجي/i.test(t)) return "يالنجي";
-  if (/محاشي/i.test(t)) return "محاشي";
-
+function parseDishFromId(id = "") {
+  if (id === "order:item:maqluba") return "مقلوبة";
+  if (id === "order:item:grape_leaves") return "ورق عنب";
+  if (id === "order:item:cabbage") return "ملفوف";
+  if (id === "order:item:zucchini") return "كوسا";
+  if (id === "order:item:eggplant") return "باذنجان";
+  if (id === "order:item:maftoul") return "مفتول";
   return null;
 }
 
-function parseProtein(text = "") {
-  const t = cleanText(text);
-
-  if (/دجاج|جاج|جاجة|جاجتين|دجاجة|دجاجتين/i.test(t)) return "دجاج";
-  if (/لحم|لحمة/i.test(t)) return "لحم";
-
+function parseProteinFromId(id = "") {
+  if (id === "order:protein:chicken") return "دجاج";
+  if (id === "order:protein:meat") return "لحم";
   return null;
 }
 
-function parseQuantity(text = "") {
-  const t = cleanText(text);
-
-  if (/جاجتين|دجاجتين/i.test(t)) return "2 دجاج";
-  if (/جاجة|دجاجة/i.test(t)) return "1 دجاج";
-
-  const match = t.match(/(\d+(?:\.\d+)?)\s*(كيلو|وجبة|صحن|حبة|حبات)?/);
-  if (!match) return null;
-
-  return match[2] ? `${match[1]} ${match[2]}` : match[1];
-}
-
-function parsePaymentMethod(text = "") {
-  const t = cleanText(text);
-
-  if (/كاش|نقد/i.test(t)) return "cash";
-  if (/كليك|تحويل|بطاقة|فيزا/i.test(t)) return "electronic";
-
+function parseQtyFromId(id = "") {
+  if (id === "order:qty:1") return "1";
+  if (id === "order:qty:2") return "2";
+  if (id === "order:qty:3") return "3";
+  if (id === "order:qty:4") return "4";
   return null;
 }
 
-function classifyIntent(text = "") {
-  const t = cleanText(text);
+function parseAreaFromId(id = "") {
+  const map = {
+    "order:area:umm_sumaq": "أم السماق",
+    "order:area:abdoun": "عبدون",
+    "order:area:dabouq": "دابوق",
+    "order:area:khilda": "خلدا",
+    "order:area:tabarbour": "طبربور",
+  };
+  return map[id] || null;
+}
 
-  if (/منيو|شو عندكم|شو في|شو موجود|الاصناف|الأصناف|اعرف شو في|بدي منيو/i.test(t)) {
-    return "view_menu";
-  }
+function parseTimeFromId(id = "") {
+  const map = {
+    "order:time:asap": "أقرب وقت متاح",
+    "order:time:today": "اليوم",
+    "order:time:tomorrow": "غدًا",
+    "order:time_slot:11_12": "11:00-12:00",
+    "order:time_slot:12_13": "12:00-13:00",
+    "order:time_slot:13_14": "13:00-14:00",
+    "order:time_slot:14_15": "14:00-15:00",
+    "order:time_slot:15_16": "15:00-16:00",
+    "order:time_slot:16_1630": "16:00-16:30",
+  };
+  return map[id] || null;
+}
 
-  if (/سعر|كم|بكم/i.test(t)) return "ask_price";
-  if (/توصيل|دليفري|يوصل/i.test(t)) return "ask_delivery";
-  if (/موقع|عنوان|وين/i.test(t)) return "ask_location";
-  if (isOrderIntent(t)) return "order_food";
-  if (isGreeting(t)) return "greeting";
-
-  return "general";
+function parsePaymentFromId(id = "") {
+  if (id === "order:payment:cash") return "cash";
+  if (id === "order:payment:transfer") return "electronic";
+  return null;
 }
 
 function getWelcomeMessage(lang = "ar") {
   return tr(
     lang,
-    `أهلاً وسهلاً بكم في ${CONFIG.business.name}
-كل عام وأنتم بخير بمناسبة الشهر الفضيل، وقرب عيد الفطر السعيد.
-تقبل الله طاعاتكم، وجعلكم من المقبولين.
+    `أهلاً وسهلاً بكم في ${CONFIG.business.name} 🌙
+كل عام وأنتم بخير، وتقبل الله طاعاتكم.
 
-أنا مساعد مطبخ اليوم الذكي، ويسعدني خدمتك في:
-• استقبال الطلبات
-• عرض الأصناف والأسعار
-• توضيح مناطق ورسوم التوصيل
-• متابعة الطلبات
-
-يمكنك البدء الآن بكتابة الصنف الذي تريده، مثل:
-بدي مقلوبة على دجاجة`,
-    `Welcome to ${CONFIG.business.name}.
-How can I help you today?`
+أنا مساعد مطبخ اليوم الذكي، ويسعدني خدمتك.`,
+    `Welcome to ${CONFIG.business.name}.`
   );
 }
 
@@ -125,25 +99,164 @@ function getOutOfHoursMessage(lang = "ar") {
     `يسعدني خدمتك 🌙
 نستقبل الطلبات والاستفسارات، مع التنويه أن تأكيد الطلبات والتسليم يتم حاليًا ضمن الفترة من 10:00 صباحًا حتى 6:00 مساءً بتوقيت عمّان.
 يمكنني الآن تسجيل طلبك مبدئيًا ومتابعته في أول وقت متاح ضمن فترة التشغيل.`,
-    `We accept inquiries now, but order confirmation and delivery are currently handled between 10:00 AM and 6:00 PM Amman time.`
+    `We accept inquiries now, but confirmations and deliveries are handled between 10:00 AM and 6:00 PM Amman time.`
   );
 }
 
-function getRamadanMessage(lang = "ar") {
-  return tr(
-    lang,
-    `أهلاً وسهلاً 🌙
-خلال شهر رمضان المبارك، البيع الحالي لدينا مخصص لوجبة الإفطار فقط.
-يسعدني مساعدتك في اختيار الأصناف المناسبة للإفطار واستكمال الطلب معك.`,
-    `During Ramadan, current sales are limited to iftar meals only.`
-  );
+function getHomeButtons(lang = "ar") {
+  return [
+    { id: "home:start_order", title: tr(lang, "ابدأ الطلب", "Start Order") },
+    { id: "home:menu", title: tr(lang, "المنيو", "Menu") },
+    { id: "home:offers", title: tr(lang, "العروض", "Offers") },
+  ];
 }
 
-function getMenuMessage(lang = "ar") {
+function getOrderCategoriesSections(lang = "ar") {
+  return [
+    {
+      title: tr(lang, "الأقسام", "Categories"),
+      rows: [
+        {
+          id: "order:category:cooked",
+          title: tr(lang, "أطباق مطبوخة", "Cooked Dishes"),
+          description: tr(lang, "جاهزة للتقديم", "Ready to serve"),
+        },
+        {
+          id: "order:category:ready_to_cook",
+          title: tr(lang, "جاهز للطبخ", "Ready to Cook"),
+          description: tr(lang, "أصناف مجهزة للطبخ", "Prepared for cooking"),
+        },
+        {
+          id: "order:category:frozen",
+          title: tr(lang, "مفرزات ومبرد", "Frozen & Chilled"),
+          description: tr(lang, "أصناف محفوظة", "Stored items"),
+        },
+        {
+          id: "order:category:feasts",
+          title: tr(lang, "ولائم وعزائم", "Feasts"),
+          description: tr(lang, "طلبات أكبر", "Larger orders"),
+        },
+      ],
+    },
+  ];
+}
+
+function getCookedItemsSections(lang = "ar") {
+  return [
+    {
+      title: tr(lang, "الأصناف", "Items"),
+      rows: [
+        { id: "order:item:maqluba", title: tr(lang, "مقلوبة", "Maqluba"), description: tr(lang, "أرز وخضار ولحم أو دجاج", "Rice dish") },
+        { id: "order:item:grape_leaves", title: tr(lang, "ورق عنب", "Grape Leaves"), description: tr(lang, "طعم منزلي", "Homestyle") },
+        { id: "order:item:cabbage", title: tr(lang, "ملفوف", "Cabbage"), description: tr(lang, "محشي ملفوف", "Stuffed cabbage") },
+        { id: "order:item:zucchini", title: tr(lang, "كوسا", "Zucchini"), description: tr(lang, "محشي كوسا", "Stuffed zucchini") },
+        { id: "order:item:eggplant", title: tr(lang, "باذنجان", "Eggplant"), description: tr(lang, "محشي باذنجان", "Stuffed eggplant") },
+        { id: "order:item:maftoul", title: tr(lang, "مفتول", "Maftoul"), description: tr(lang, "طبق شرقي", "Eastern dish") },
+      ],
+    },
+  ];
+}
+
+function getProteinButtons(lang = "ar") {
+  return [
+    { id: "order:protein:chicken", title: tr(lang, "دجاج", "Chicken") },
+    { id: "order:protein:meat", title: tr(lang, "لحم", "Meat") },
+    { id: "nav:back:cooked_items", title: tr(lang, "رجوع", "Back") },
+  ];
+}
+
+function getQtyButtons(lang = "ar") {
+  return [
+    { id: "order:qty:1", title: "1" },
+    { id: "order:qty:2", title: "2" },
+    { id: "order:qty:3", title: "3" },
+  ];
+}
+
+function getQtyListSections(lang = "ar") {
+  return [
+    {
+      title: tr(lang, "الكمية", "Quantity"),
+      rows: [
+        { id: "order:qty:1", title: "1", description: tr(lang, "كمية واحدة", "One") },
+        { id: "order:qty:2", title: "2", description: tr(lang, "كمية 2", "Two") },
+        { id: "order:qty:3", title: "3", description: tr(lang, "كمية 3", "Three") },
+        { id: "order:qty:4", title: "4", description: tr(lang, "كمية 4", "Four") },
+        { id: "order:qty:other", title: tr(lang, "كمية أخرى", "Other Quantity"), description: tr(lang, "إدخال يدوي", "Manual input") },
+      ],
+    },
+  ];
+}
+
+function getAreaSections(lang = "ar") {
+  return [
+    {
+      title: tr(lang, "المناطق", "Areas"),
+      rows: [
+        { id: "order:area:umm_sumaq", title: tr(lang, "أم السماق", "Um Al Summaq"), description: "" },
+        { id: "order:area:abdoun", title: tr(lang, "عبدون", "Abdoun"), description: "" },
+        { id: "order:area:dabouq", title: tr(lang, "دابوق", "Dabouq"), description: "" },
+        { id: "order:area:khilda", title: tr(lang, "خلدا", "Khilda"), description: "" },
+        { id: "order:area:tabarbour", title: tr(lang, "طبربور", "Tabarbour"), description: "" },
+        { id: "order:area:other", title: tr(lang, "منطقة أخرى", "Other Area"), description: tr(lang, "إدخال يدوي", "Manual input") },
+      ],
+    },
+  ];
+}
+
+function getTimeButtons(lang = "ar") {
+  return [
+    { id: "order:time:asap", title: tr(lang, "أقرب وقت", "ASAP") },
+    { id: "order:time:today", title: tr(lang, "اليوم", "Today") },
+    { id: "order:time:tomorrow", title: tr(lang, "غدًا", "Tomorrow") },
+  ];
+}
+
+function getTimeSlotSections(lang = "ar") {
+  return [
+    {
+      title: tr(lang, "الفترات", "Time Slots"),
+      rows: [
+        { id: "order:time_slot:11_12", title: "11:00-12:00", description: "" },
+        { id: "order:time_slot:12_13", title: "12:00-13:00", description: "" },
+        { id: "order:time_slot:13_14", title: "13:00-14:00", description: "" },
+        { id: "order:time_slot:14_15", title: "14:00-15:00", description: "" },
+        { id: "order:time_slot:15_16", title: "15:00-16:00", description: "" },
+        { id: "order:time_slot:16_1630", title: "16:00-16:30", description: "" },
+      ],
+    },
+  ];
+}
+
+function getPaymentButtons(lang = "ar") {
+  return [
+    { id: "order:payment:cash", title: tr(lang, "كاش", "Cash") },
+    { id: "order:payment:transfer", title: tr(lang, "تحويل", "Transfer") },
+    { id: "nav:back:time", title: tr(lang, "رجوع", "Back") },
+  ];
+}
+
+function getNotesButtons(lang = "ar") {
+  return [
+    { id: "order:notes:none", title: tr(lang, "بدون ملاحظات", "No Notes") },
+    { id: "order:notes:add", title: tr(lang, "إضافة ملاحظة", "Add Note") },
+    { id: "nav:back:payment", title: tr(lang, "رجوع", "Back") },
+  ];
+}
+
+function getFinalButtons(lang = "ar") {
+  return [
+    { id: "final:confirm", title: tr(lang, "تثبيت الطلب", "Confirm") },
+    { id: "final:modify", title: tr(lang, "تعديل الطلب", "Modify") },
+    { id: "final:cancel", title: tr(lang, "إلغاء الطلب", "Cancel") },
+  ];
+}
+
+function getMenuText(lang = "ar") {
   return tr(
     lang,
-    "الأصناف المتوفرة حاليًا تشمل: مقلوبة، ورق عنب، ملفوف، كوسا، باذنجان، مفتول. اكتب الصنف الذي ترغب به وسأكمل معك الطلب.",
-    "Available dishes include maqluba, grape leaves, cabbage rolls, zucchini, eggplant, and maftoul."
+    "الأصناف المتوفرة حاليًا تشمل: مقلوبة، ورق عنب، ملفوف، كوسا، باذنجان، مفتول.",
+    "Available items include: maqluba, grape leaves, cabbage, zucchini, eggplant, and maftoul."
   );
 }
 
@@ -156,6 +269,7 @@ function buildCustomerFinalReview(context) {
 • العنوان: ${context.address || "-"}
 • الوقت المطلوب: ${context.deliveryTime || "-"}
 • طريقة الدفع: ${context.paymentMethod || "-"}
+• الملاحظات: ${context.notes || "-"}
 
 سأتابع معك بالصيغة النهائية حال اعتماد الطلب.`;
 }
@@ -175,264 +289,486 @@ function buildAdminReviewMessage(phone, context, lang = "ar") {
 الإجراء المطلوب: approve / reject / modify`;
 }
 
-async function sendWhatsAppText(to, body) {
-  const url = `https://graph.facebook.com/${CONFIG.wa.graphVersion}/${CONFIG.wa.phoneNumberId}/messages`;
-
-  try {
-    await axios.post(
-      url,
-      {
-        messaging_product: "whatsapp",
-        to: normalizePhone(to),
-        type: "text",
-        text: { body },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${CONFIG.wa.accessToken}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-  } catch (error) {
-    console.error("WHATSAPP_SEND_ERROR", error?.response?.data || error.message);
-  }
-}
-
 async function notifyAdmins(message) {
   for (const admin of CONFIG.wa.adminNumbers) {
-    await sendWhatsAppText(admin, message);
+    await sendTextMessage(admin, message);
   }
 }
 
-function mergeContext(prev = {}, text = "") {
-  const next = { ...prev };
-
-  next.dish = next.dish || parseDish(text);
-  next.protein = next.protein || parseProtein(text);
-
-  const quantity = parseQuantity(text);
-  if (!next.quantity && quantity) next.quantity = quantity;
-
-  const paymentMethod = parsePaymentMethod(text);
-  if (!next.paymentMethod && paymentMethod) next.paymentMethod = paymentMethod;
-
-  return next;
+async function sendHome(to, lang = "ar") {
+  await sendButtonsMessage(to, getWelcomeMessage(lang), getHomeButtons(lang));
 }
 
-function nextQuestion(context, lang = "ar") {
-  if (!context.dish) {
-    return tr(lang, "ما الصنف الذي ترغب به؟", "Which dish would you like?");
-  }
+async function sendOrderCategories(to, lang = "ar") {
+  await sendListMessage(
+    to,
+    tr(lang, "اختر القسم المناسب 👇", "Choose a category 👇"),
+    tr(lang, "الأقسام", "Categories"),
+    getOrderCategoriesSections(lang)
+  );
+}
+
+async function sendCookedItems(to, lang = "ar") {
+  await sendListMessage(
+    to,
+    tr(lang, "اختر الصنف المطلوب 👇", "Choose an item 👇"),
+    tr(lang, "الأصناف", "Items"),
+    getCookedItemsSections(lang)
+  );
+}
+
+async function sendProteinChoice(to, lang = "ar") {
+  await sendButtonsMessage(
+    to,
+    tr(lang, "هل تفضل الطلب على دجاج أم لحم؟", "Do you prefer chicken or meat?"),
+    getProteinButtons(lang)
+  );
+}
+
+async function sendQtyChoice(to, lang = "ar") {
+  await sendListMessage(
+    to,
+    tr(lang, "اختر الكمية المناسبة 👇", "Choose quantity 👇"),
+    tr(lang, "الكمية", "Quantity"),
+    getQtyListSections(lang)
+  );
+}
+
+async function sendAreaChoice(to, lang = "ar") {
+  await sendListMessage(
+    to,
+    tr(lang, "اختر المنطقة 👇", "Choose area 👇"),
+    tr(lang, "المناطق", "Areas"),
+    getAreaSections(lang)
+  );
+}
+
+async function sendTimeChoice(to, lang = "ar") {
+  await sendButtonsMessage(
+    to,
+    tr(lang, "اختر وقت التوصيل المناسب 👇", "Choose delivery time 👇"),
+    getTimeButtons(lang)
+  );
+}
+
+async function sendTimeSlots(to, lang = "ar") {
+  await sendListMessage(
+    to,
+    tr(lang, "اختر الفترة المناسبة 👇", "Choose time slot 👇"),
+    tr(lang, "الفترات", "Time Slots"),
+    getTimeSlotSections(lang)
+  );
+}
+
+async function sendPaymentChoice(to, lang = "ar") {
+  await sendButtonsMessage(
+    to,
+    tr(lang, "اختر طريقة الدفع 👇", "Choose payment method 👇"),
+    getPaymentButtons(lang)
+  );
+}
+
+async function sendNotesChoice(to, lang = "ar") {
+  await sendButtonsMessage(
+    to,
+    tr(lang, "هل لديك ملاحظات على الطلب؟", "Any notes for the order?"),
+    getNotesButtons(lang)
+  );
+}
+
+async function sendMenuPreview(to, lang = "ar") {
+  await sendButtonsMessage(
+    to,
+    `${getMenuText(lang)}\n\n${tr(lang, "يمكنك الآن بدء الطلب.", "You can start your order now.")}`,
+    [
+      { id: "home:start_order", title: tr(lang, "ابدأ الطلب", "Start Order") },
+      { id: "nav:back:home", title: tr(lang, "الرئيسية", "Home") },
+    ]
+  );
+}
+
+async function finalizeDraftIfReady(from, customer, stateRow, lang = "ar") {
+  const context = stateRow?.context || {};
 
   if (
-    (context.dish === "مقلوبة" || context.dish === "محاشي") &&
-    !context.protein
+    !context.dish ||
+    !context.quantity ||
+    !context.area ||
+    !context.address ||
+    !context.deliveryTime ||
+    !context.paymentMethod
   ) {
-    return tr(
-      lang,
-      "هل تفضل الطلب على دجاج أم لحم؟",
-      "Do you prefer chicken or meat?"
-    );
+    return false;
   }
 
-  if (!context.quantity) {
-    return tr(lang, "كم الكمية التي ترغب بها؟", "What quantity would you like?");
-  }
-
-  if (!context.area) {
-    return tr(lang, "ما هي المنطقة؟", "What is the delivery area?");
-  }
-
-  if (!context.address) {
-    return tr(lang, "أرسل العنوان بالتفصيل من فضلك.", "Please send the full address.");
-  }
-
-  if (!context.deliveryTime) {
-    return tr(lang, "ما الوقت المناسب للتوصيل؟", "What delivery time do you prefer?");
-  }
-
-  if (!context.paymentMethod) {
-    return tr(
-      lang,
-      "ما طريقة الدفع المناسبة؟ كاش أم تحويل؟",
-      "Preferred payment method: cash or transfer?"
-    );
-  }
-
-  return null;
-}
-
-function getKnowledgeOrSmartReply(text, lang = "ar") {
-  const t = cleanText(text);
-
-  if (/منيو|شو عندكم|شو في|شو موجود|اعرف شو في|بدي منيو/i.test(t)) {
-    return getMenuMessage(lang);
-  }
-
-  return null;
-}
-
-async function processSingleMessage({
-  from,
-  text,
-  customer,
-  stateRow,
-  lang,
-}) {
-  const intent = classifyIntent(text);
-  const currentContext = stateRow?.context || {};
-  const mergedContext = mergeContext(currentContext, text);
-
-  let reply = null;
-
-  if (isGreeting(text)) {
-    reply = getWelcomeMessage(lang);
-    await writeChatState(from, "START", currentContext);
-  } else {
-    const smartReply = getKnowledgeOrSmartReply(text, lang);
-    if (smartReply) {
-      reply = smartReply;
-    } else {
-      const knowledge = await getKnowledgeAnswer(text);
-      if (knowledge && intent !== "order_food") {
-        reply = knowledge;
-      }
-    }
-  }
-
-  // خارج الوقت: يطبّق فقط على الطلب، وليس على المنيو أو الأسئلة العامة
-  if (!reply && intent === "order_food" && !isInsideOperatingWindow()) {
-    reply = getOutOfHoursMessage(lang);
-  }
-
-  if (!reply && CONFIG.orderFlow.ramadanIftarOnly) {
-    if (intent === "order_food" && !currentContext.ramadanNoticeShown) {
-      mergedContext.ramadanNoticeShown = true;
-
-      if (isInsideOperatingWindow()) {
-        reply = `${getRamadanMessage(lang)}\n\n${nextQuestion(mergedContext, lang) || ""}`.trim();
-      }
-    }
-  }
-
-  if (!reply && intent === "ask_price") {
-    reply = tr(
-      lang,
-      "يسعدني خدمتك. أخبرني بالصنف والكمية حتى أتابع معك بشكل أدق.",
-      "Tell me the dish and quantity so I can help accurately."
-    );
-  }
-
-  if (!reply && intent === "view_menu") {
-    reply = getMenuMessage(lang);
-  }
-
-  if (!reply && intent === "order_food") {
-    const question = nextQuestion(mergedContext, lang);
-
-    if (question) {
-      reply = question;
-      await writeChatState(from, "COLLECT_ORDER", mergedContext);
-    } else {
-      const order = await createDraftOrder({
-        phone: from,
-        customerId: customer?.id || null,
-        items: [
-          {
-            dish: mergedContext.dish,
-            protein: mergedContext.protein,
-            quantity: mergedContext.quantity,
-          },
-        ],
-        subtotal: null,
-        deliveryArea: mergedContext.area,
-        deliveryAddress: mergedContext.address,
-        paymentMethod: mergedContext.paymentMethod,
-        requestedDeliveryTime: mergedContext.deliveryTime,
-        customerNotes: mergedContext.notes || null,
-      });
-
-      await saveCustomerFact(from, "last_area", { area: mergedContext.area });
-      await saveCustomerFact(from, "favorite_dish_candidate", {
-        dish: mergedContext.dish,
-        protein: mergedContext.protein,
-      });
-
-      await notifyAdmins(buildAdminReviewMessage(from, mergedContext, lang));
-      await writeChatState(from, "AWAITING_INTERNAL_REVIEW", {
-        ...mergedContext,
-        orderId: order?.id || null,
-      });
-
-      reply = buildCustomerFinalReview(mergedContext);
-    }
-  }
-
-  if (!reply && stateRow?.state === "COLLECT_ORDER") {
-    const question = nextQuestion(mergedContext, lang);
-
-    if (question) {
-      reply = question;
-      await writeChatState(from, "COLLECT_ORDER", mergedContext);
-    }
-  }
-
-  if (!reply) {
-    reply = tr(
-      lang,
-      "يسعدني خدمتك. يمكنك كتابة الصنف مباشرة مثل: بدي مقلوبة على دجاجة، أو سؤال مثل: هل الأكل مطبوخ؟",
-      "You can type your dish directly, for example: I want chicken maqluba."
-    );
-  }
-
-  await logConversation({
-    customerId: customer?.id || null,
+  const order = await createDraftOrder({
     phone: from,
-    incomingText: text,
-    botReplyText: reply,
-    messageType: "text",
-    detectedLanguage: lang,
-    intent,
+    customerId: customer?.id || null,
+    items: [
+      {
+        dish: context.dish,
+        protein: context.protein,
+        quantity: context.quantity,
+      },
+    ],
+    subtotal: null,
+    deliveryArea: context.area,
+    deliveryAddress: context.address,
+    paymentMethod: context.paymentMethod,
+    requestedDeliveryTime: context.deliveryTime,
+    customerNotes: context.notes || null,
   });
 
-  return { reply, intent };
+  await saveCustomerFact(from, "last_area", { area: context.area });
+  await saveCustomerFact(from, "favorite_dish_candidate", {
+    dish: context.dish,
+    protein: context.protein,
+  });
+
+  await notifyAdmins(buildAdminReviewMessage(from, context, lang));
+  await writeChatState(from, "AWAITING_INTERNAL_REVIEW", {
+    ...context,
+    orderId: order?.id || null,
+  });
+
+  await sendTextMessage(from, buildCustomerFinalReview(context));
+  return true;
+}
+
+async function handleTextByState({ from, text, stateRow, lang, customer }) {
+  const currentState = stateRow?.state || "START";
+  const context = { ...(stateRow?.context || {}) };
+
+  if (currentState === "WAITING_CUSTOM_QUANTITY") {
+    context.quantity = cleanText(text);
+    await writeChatState(from, "COLLECT_ORDER", context);
+    await sendAreaChoice(from, lang);
+    return true;
+  }
+
+  if (currentState === "WAITING_CUSTOM_AREA") {
+    context.area = cleanText(text);
+    await writeChatState(from, "WAITING_ADDRESS", context);
+    await sendTextMessage(from, tr(lang, "أرسل العنوان بالتفصيل من فضلك.", "Please send the full address."));
+    return true;
+  }
+
+  if (currentState === "WAITING_ADDRESS") {
+    context.address = cleanText(text);
+    await writeChatState(from, "COLLECT_ORDER", context);
+    await sendButtonsMessage(
+      from,
+      tr(lang, "اختر الوقت المناسب أو افتح الفترات 👇", "Choose delivery time or open slots 👇"),
+      [
+        { id: "order:time:asap", title: tr(lang, "أقرب وقت", "ASAP") },
+        { id: "order:time:today", title: tr(lang, "اليوم", "Today") },
+        { id: "order:time:custom_slot", title: tr(lang, "تحديد وقت", "Time Slot") },
+      ]
+    );
+    return true;
+  }
+
+  if (currentState === "WAITING_NOTES") {
+    context.notes = cleanText(text);
+    await writeChatState(from, "COLLECT_ORDER", context);
+    const latest = await readChatState(from);
+    await finalizeDraftIfReady(from, customer, latest, lang);
+    return true;
+  }
+
+  return false;
+}
+
+async function handleInteractiveSelection({ from, id, lang, customer }) {
+  const stateRow = await readChatState(from);
+  const context = { ...(stateRow?.context || {}) };
+
+  if (id === "home:start_order") {
+    await writeChatState(from, "VIEWING_ORDER_CATEGORIES", context);
+    await sendOrderCategories(from, lang);
+    return true;
+  }
+
+  if (id === "home:menu") {
+    await writeChatState(from, "VIEWING_MENU", context);
+    await sendMenuPreview(from, lang);
+    return true;
+  }
+
+  if (id === "home:offers") {
+    await sendTextMessage(
+      from,
+      tr(lang, "العروض سيتم ربطها من قاعدة البيانات في المرحلة التالية 🌿", "Offers will be linked from database in the next step.")
+    );
+    return true;
+  }
+
+  if (id === "nav:back:home") {
+    await writeChatState(from, "START", {});
+    await sendHome(from, lang);
+    return true;
+  }
+
+  if (id === "order:category:cooked") {
+    context.category = "cooked";
+    await writeChatState(from, "COLLECT_ORDER", context);
+    await sendCookedItems(from, lang);
+    return true;
+  }
+
+  if (id.startsWith("order:item:")) {
+    context.dish = parseDishFromId(id);
+    await writeChatState(from, "COLLECT_ORDER", context);
+
+    if (context.dish === "مقلوبة") {
+      await sendProteinChoice(from, lang);
+    } else {
+      await sendQtyChoice(from, lang);
+    }
+    return true;
+  }
+
+  if (id.startsWith("order:protein:")) {
+    context.protein = parseProteinFromId(id);
+    await writeChatState(from, "COLLECT_ORDER", context);
+    await sendQtyChoice(from, lang);
+    return true;
+  }
+
+  if (id === "order:qty:other") {
+    await writeChatState(from, "WAITING_CUSTOM_QUANTITY", context);
+    await sendTextMessage(from, tr(lang, "أرسل الكمية المطلوبة بالأرقام من فضلك.", "Please send the quantity in numbers."));
+    return true;
+  }
+
+  if (id.startsWith("order:qty:")) {
+    context.quantity = parseQtyFromId(id);
+    await writeChatState(from, "COLLECT_ORDER", context);
+    await sendAreaChoice(from, lang);
+    return true;
+  }
+
+  if (id === "order:area:other") {
+    await writeChatState(from, "WAITING_CUSTOM_AREA", context);
+    await sendTextMessage(from, tr(lang, "أرسل اسم المنطقة من فضلك.", "Please send the area name."));
+    return true;
+  }
+
+  if (id.startsWith("order:area:")) {
+    context.area = parseAreaFromId(id);
+    await writeChatState(from, "WAITING_ADDRESS", context);
+    await sendTextMessage(from, tr(lang, "أرسل العنوان بالتفصيل من فضلك.", "Please send the full address."));
+    return true;
+  }
+
+  if (id === "order:time:custom_slot") {
+    await writeChatState(from, "COLLECT_ORDER", context);
+    await sendTimeSlots(from, lang);
+    return true;
+  }
+
+  if (id.startsWith("order:time:") || id.startsWith("order:time_slot:")) {
+    context.deliveryTime = parseTimeFromId(id);
+    await writeChatState(from, "COLLECT_ORDER", context);
+    await sendPaymentChoice(from, lang);
+    return true;
+  }
+
+  if (id.startsWith("order:payment:")) {
+    context.paymentMethod = parsePaymentFromId(id);
+    await writeChatState(from, "COLLECT_ORDER", context);
+    await sendNotesChoice(from, lang);
+    return true;
+  }
+
+  if (id === "order:notes:none") {
+    context.notes = null;
+    await writeChatState(from, "COLLECT_ORDER", context);
+    const latest = await readChatState(from);
+    await finalizeDraftIfReady(from, customer, latest, lang);
+    return true;
+  }
+
+  if (id === "order:notes:add") {
+    await writeChatState(from, "WAITING_NOTES", context);
+    await sendTextMessage(from, tr(lang, "أرسل الملاحظة من فضلك.", "Please send your note."));
+    return true;
+  }
+
+  if (id === "final:confirm") {
+    await sendTextMessage(
+      from,
+      tr(lang, "رائع 🌿 تم تثبيت طلبك النهائي وبدأت إجراءات التنفيذ.", "Great. Your order has been confirmed and execution has started.")
+    );
+    await writeChatState(from, "CUSTOMER_CONFIRMED", context);
+    return true;
+  }
+
+  if (id === "final:modify") {
+    await sendTextMessage(
+      from,
+      tr(lang, "تم استلام طلب التعديل. سأعيدك الآن إلى مسار الطلب.", "Modification request received. Returning you to the order flow.")
+    );
+    await writeChatState(from, "VIEWING_ORDER_CATEGORIES", {});
+    await sendOrderCategories(from, lang);
+    return true;
+  }
+
+  if (id === "final:cancel") {
+    await sendTextMessage(
+      from,
+      tr(lang, "تم استلام طلب الإلغاء.", "Cancellation request received.")
+    );
+    await writeChatState(from, "ORDER_CANCELLED", context);
+    return true;
+  }
+
+  return false;
 }
 
 export async function processInboundText({ from, text }) {
   const lang = detectLanguage(text);
   const customer = await createCustomerIfMissing(from, null, lang);
-  let stateRow = await readChatState(from);
+  const stateRow = await readChatState(from);
+  const cleaned = cleanText(text);
 
-  const parts = splitCombinedMessage(text);
-  const messages = parts.length ? parts : [cleanText(text)];
+  if (!cleaned) {
+    await sendHome(from, lang);
+    return { ok: true };
+  }
 
-  let lastReply = null;
+  const handledByState = await handleTextByState({
+    from,
+    text: cleaned,
+    stateRow,
+    lang,
+    customer,
+  });
 
-  for (const msg of messages) {
-    const result = await processSingleMessage({
-      from,
-      text: msg,
-      customer,
-      stateRow,
-      lang,
+  if (handledByState) {
+    await logConversation({
+      customerId: customer?.id || null,
+      phone: from,
+      incomingText: cleaned,
+      botReplyText: null,
+      messageType: "text",
+      detectedLanguage: lang,
+      intent: "state_text_input",
     });
-
-    lastReply = result.reply;
-    stateRow = await readChatState(from);
+    return { ok: true };
   }
 
-  if (!lastReply) {
-    lastReply = tr(
+  if (isGreeting(cleaned)) {
+    await writeChatState(from, "START", {});
+    await sendHome(from, lang);
+    await logConversation({
+      customerId: customer?.id || null,
+      phone: from,
+      incomingText: cleaned,
+      botReplyText: getWelcomeMessage(lang),
+      messageType: "text",
+      detectedLanguage: lang,
+      intent: "greeting",
+    });
+    return { ok: true };
+  }
+
+  if (/منيو|شو عندكم|شو في|اعرف شو في|الأصناف|الاصناف/i.test(cleaned)) {
+    await sendMenuPreview(from, lang);
+    await logConversation({
+      customerId: customer?.id || null,
+      phone: from,
+      incomingText: cleaned,
+      botReplyText: getMenuText(lang),
+      messageType: "text",
+      detectedLanguage: lang,
+      intent: "view_menu",
+    });
+    return { ok: true };
+  }
+
+  const knowledge = await getKnowledgeAnswer(cleaned);
+  if (knowledge) {
+    await sendButtonsMessage(from, knowledge, [
+      { id: "home:start_order", title: tr(lang, "ابدأ الطلب", "Start Order") },
+      { id: "home:menu", title: tr(lang, "المنيو", "Menu") },
+      { id: "nav:back:home", title: tr(lang, "الرئيسية", "Home") },
+    ]);
+    await logConversation({
+      customerId: customer?.id || null,
+      phone: from,
+      incomingText: cleaned,
+      botReplyText: knowledge,
+      messageType: "text",
+      detectedLanguage: lang,
+      intent: "knowledge",
+    });
+    return { ok: true };
+  }
+
+  if (!isInsideOperatingWindow() && /بدي|اريد|أريد|بدنا|طلب|مقلوبة|ورق عنب|ملفوف|كوسا|باذنجان|مفتول/i.test(cleaned)) {
+    await sendButtonsMessage(from, getOutOfHoursMessage(lang), [
+      { id: "home:menu", title: tr(lang, "المنيو", "Menu") },
+      { id: "home:start_order", title: tr(lang, "تسجيل مبدئي", "Save Draft") },
+      { id: "nav:back:home", title: tr(lang, "الرئيسية", "Home") },
+    ]);
+    await logConversation({
+      customerId: customer?.id || null,
+      phone: from,
+      incomingText: cleaned,
+      botReplyText: getOutOfHoursMessage(lang),
+      messageType: "text",
+      detectedLanguage: lang,
+      intent: "out_of_hours_order",
+    });
+    return { ok: true };
+  }
+
+  await sendButtonsMessage(
+    from,
+    tr(
       lang,
-      "يسعدني خدمتك. كيف يمكنني مساعدتك اليوم؟",
-      "How can I help you today?"
-    );
-  }
+      "يسعدني خدمتك. اختر الإجراء المناسب 👇",
+      "Choose the next action 👇"
+    ),
+    getHomeButtons(lang)
+  );
 
-  await sendWhatsAppText(from, lastReply);
+  await logConversation({
+    customerId: customer?.id || null,
+    phone: from,
+    incomingText: cleaned,
+    botReplyText: null,
+    messageType: "text",
+    detectedLanguage: lang,
+    intent: "fallback",
+  });
 
-  return { ok: true, reply: lastReply };
+  return { ok: true };
+}
+
+export async function processInteractiveReply({ from, interactiveId, interactiveTitle = "" }) {
+  const lang = detectLanguage(interactiveTitle || "مرحبا");
+  const customer = await createCustomerIfMissing(from, null, lang);
+
+  const handled = await handleInteractiveSelection({
+    from,
+    id: interactiveId,
+    lang,
+    customer,
+  });
+
+  await logConversation({
+    customerId: customer?.id || null,
+    phone: from,
+    incomingText: interactiveTitle || interactiveId,
+    botReplyText: null,
+    messageType: "interactive",
+    detectedLanguage: lang,
+    intent: interactiveId,
+  });
+
+  return { ok: handled };
 }
 
 export async function processCustomerConfirmation({ from, text }) {
@@ -452,7 +788,7 @@ export async function processCustomerConfirmation({ from, text }) {
 يرجى بدء التنفيذ والمتابعة حتى التسليم.`);
 
   await writeChatState(from, "CUSTOMER_CONFIRMED", stateRow.context || {});
-  await sendWhatsAppText(
+  await sendTextMessage(
     from,
     "تم تأكيد طلبك بنجاح. نعمل الآن على متابعته حتى التسليم، وسأبقيك على اطلاع بحالة الطلب."
   );
