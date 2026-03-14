@@ -26,6 +26,10 @@ function cleanText(text = "") {
   return String(text).replace(/\s+/g, " ").trim();
 }
 
+function isGreeting(text = "") {
+  return /^(مرحبا|السلام عليكم|هلا|أهلا|اهلا|hello|hi)\b/i.test(cleanText(text));
+}
+
 function parseDishFromId(id = "") {
   if (id === "order:item:maqluba") return "مقلوبة";
   if (id === "order:item:grape_leaves") return "ورق عنب";
@@ -103,14 +107,6 @@ function getOutOfHoursMessage(lang = "ar") {
   );
 }
 
-function getHomeButtons(lang = "ar") {
-  return [
-    { id: "home:start_order", title: tr(lang, "ابدأ الطلب", "Start Order") },
-    { id: "home:menu", title: tr(lang, "المنيو", "Menu") },
-    { id: "home:offers", title: tr(lang, "العروض", "Offers") },
-  ];
-}
-
 function getOrderCategoriesSections(lang = "ar") {
   return [
     {
@@ -146,14 +142,46 @@ function getCookedItemsSections(lang = "ar") {
     {
       title: tr(lang, "الأصناف", "Items"),
       rows: [
-        { id: "order:item:maqluba", title: tr(lang, "مقلوبة", "Maqluba"), description: tr(lang, "أرز وخضار ولحم أو دجاج", "Rice dish") },
-        { id: "order:item:grape_leaves", title: tr(lang, "ورق عنب", "Grape Leaves"), description: tr(lang, "طعم منزلي", "Homestyle") },
-        { id: "order:item:cabbage", title: tr(lang, "ملفوف", "Cabbage"), description: tr(lang, "محشي ملفوف", "Stuffed cabbage") },
-        { id: "order:item:zucchini", title: tr(lang, "كوسا", "Zucchini"), description: tr(lang, "محشي كوسا", "Stuffed zucchini") },
-        { id: "order:item:eggplant", title: tr(lang, "باذنجان", "Eggplant"), description: tr(lang, "محشي باذنجان", "Stuffed eggplant") },
-        { id: "order:item:maftoul", title: tr(lang, "مفتول", "Maftoul"), description: tr(lang, "طبق شرقي", "Eastern dish") },
+        {
+          id: "order:item:maqluba",
+          title: tr(lang, "مقلوبة", "Maqluba"),
+          description: tr(lang, "أرز وخضار ولحم أو دجاج", "Rice dish"),
+        },
+        {
+          id: "order:item:grape_leaves",
+          title: tr(lang, "ورق عنب", "Grape Leaves"),
+          description: tr(lang, "طعم منزلي", "Homestyle"),
+        },
+        {
+          id: "order:item:cabbage",
+          title: tr(lang, "ملفوف", "Cabbage"),
+          description: tr(lang, "محشي ملفوف", "Stuffed cabbage"),
+        },
+        {
+          id: "order:item:zucchini",
+          title: tr(lang, "كوسا", "Zucchini"),
+          description: tr(lang, "محشي كوسا", "Stuffed zucchini"),
+        },
+        {
+          id: "order:item:eggplant",
+          title: tr(lang, "باذنجان", "Eggplant"),
+          description: tr(lang, "محشي باذنجان", "Stuffed eggplant"),
+        },
+        {
+          id: "order:item:maftoul",
+          title: tr(lang, "مفتول", "Maftoul"),
+          description: tr(lang, "طبق شرقي", "Eastern dish"),
+        },
       ],
     },
+  ];
+}
+
+function getHomeButtons(lang = "ar") {
+  return [
+    { id: "home:start_order", title: tr(lang, "ابدأ الطلب", "Start Order") },
+    { id: "home:menu", title: tr(lang, "المنيو", "Menu") },
+    { id: "home:offers", title: tr(lang, "العروض", "Offers") },
   ];
 }
 
@@ -162,14 +190,6 @@ function getProteinButtons(lang = "ar") {
     { id: "order:protein:chicken", title: tr(lang, "دجاج", "Chicken") },
     { id: "order:protein:meat", title: tr(lang, "لحم", "Meat") },
     { id: "nav:back:cooked_items", title: tr(lang, "رجوع", "Back") },
-  ];
-}
-
-function getQtyButtons(lang = "ar") {
-  return [
-    { id: "order:qty:1", title: "1" },
-    { id: "order:qty:2", title: "2" },
-    { id: "order:qty:3", title: "3" },
   ];
 }
 
@@ -241,14 +261,6 @@ function getNotesButtons(lang = "ar") {
     { id: "order:notes:none", title: tr(lang, "بدون ملاحظات", "No Notes") },
     { id: "order:notes:add", title: tr(lang, "إضافة ملاحظة", "Add Note") },
     { id: "nav:back:payment", title: tr(lang, "رجوع", "Back") },
-  ];
-}
-
-function getFinalButtons(lang = "ar") {
-  return [
-    { id: "final:confirm", title: tr(lang, "تثبيت الطلب", "Confirm") },
-    { id: "final:modify", title: tr(lang, "تعديل الطلب", "Modify") },
-    { id: "final:cancel", title: tr(lang, "إلغاء الطلب", "Cancel") },
   ];
 }
 
@@ -343,23 +355,6 @@ async function sendAreaChoice(to, lang = "ar") {
   );
 }
 
-async function sendTimeChoice(to, lang = "ar") {
-  await sendButtonsMessage(
-    to,
-    tr(lang, "اختر وقت التوصيل المناسب 👇", "Choose delivery time 👇"),
-    getTimeButtons(lang)
-  );
-}
-
-async function sendTimeSlots(to, lang = "ar") {
-  await sendListMessage(
-    to,
-    tr(lang, "اختر الفترة المناسبة 👇", "Choose time slot 👇"),
-    tr(lang, "الفترات", "Time Slots"),
-    getTimeSlotSections(lang)
-  );
-}
-
 async function sendPaymentChoice(to, lang = "ar") {
   await sendButtonsMessage(
     to,
@@ -449,21 +444,21 @@ async function handleTextByState({ from, text, stateRow, lang, customer }) {
   if (currentState === "WAITING_CUSTOM_AREA") {
     context.area = cleanText(text);
     await writeChatState(from, "WAITING_ADDRESS", context);
-    await sendTextMessage(from, tr(lang, "أرسل العنوان بالتفصيل من فضلك.", "Please send the full address."));
+    await sendTextMessage(
+      from,
+      tr(lang, "أرسل العنوان بالتفصيل من فضلك.", "Please send the full address.")
+    );
     return true;
   }
 
   if (currentState === "WAITING_ADDRESS") {
     context.address = cleanText(text);
     await writeChatState(from, "COLLECT_ORDER", context);
+
     await sendButtonsMessage(
       from,
-      tr(lang, "اختر الوقت المناسب أو افتح الفترات 👇", "Choose delivery time or open slots 👇"),
-      [
-        { id: "order:time:asap", title: tr(lang, "أقرب وقت", "ASAP") },
-        { id: "order:time:today", title: tr(lang, "اليوم", "Today") },
-        { id: "order:time:custom_slot", title: tr(lang, "تحديد وقت", "Time Slot") },
-      ]
+      tr(lang, "اختر وقت التوصيل المناسب 👇", "Choose delivery time 👇"),
+      getTimeButtons(lang)
     );
     return true;
   }
@@ -498,7 +493,11 @@ async function handleInteractiveSelection({ from, id, lang, customer }) {
   if (id === "home:offers") {
     await sendTextMessage(
       from,
-      tr(lang, "العروض سيتم ربطها من قاعدة البيانات في المرحلة التالية 🌿", "Offers will be linked from database in the next step.")
+      tr(
+        lang,
+        "العروض سيتم ربطها من قاعدة البيانات في المرحلة التالية 🌿",
+        "Offers will be linked from database in the next step."
+      )
     );
     return true;
   }
@@ -506,6 +505,11 @@ async function handleInteractiveSelection({ from, id, lang, customer }) {
   if (id === "nav:back:home") {
     await writeChatState(from, "START", {});
     await sendHome(from, lang);
+    return true;
+  }
+
+  if (id === "nav:back:cooked_items") {
+    await sendCookedItems(from, lang);
     return true;
   }
 
@@ -537,7 +541,10 @@ async function handleInteractiveSelection({ from, id, lang, customer }) {
 
   if (id === "order:qty:other") {
     await writeChatState(from, "WAITING_CUSTOM_QUANTITY", context);
-    await sendTextMessage(from, tr(lang, "أرسل الكمية المطلوبة بالأرقام من فضلك.", "Please send the quantity in numbers."));
+    await sendTextMessage(
+      from,
+      tr(lang, "أرسل الكمية المطلوبة بالأرقام من فضلك.", "Please send the quantity in numbers.")
+    );
     return true;
   }
 
@@ -550,20 +557,31 @@ async function handleInteractiveSelection({ from, id, lang, customer }) {
 
   if (id === "order:area:other") {
     await writeChatState(from, "WAITING_CUSTOM_AREA", context);
-    await sendTextMessage(from, tr(lang, "أرسل اسم المنطقة من فضلك.", "Please send the area name."));
+    await sendTextMessage(
+      from,
+      tr(lang, "أرسل اسم المنطقة من فضلك.", "Please send the area name.")
+    );
     return true;
   }
 
   if (id.startsWith("order:area:")) {
     context.area = parseAreaFromId(id);
     await writeChatState(from, "WAITING_ADDRESS", context);
-    await sendTextMessage(from, tr(lang, "أرسل العنوان بالتفصيل من فضلك.", "Please send the full address."));
+    await sendTextMessage(
+      from,
+      tr(lang, "أرسل العنوان بالتفصيل من فضلك.", "Please send the full address.")
+    );
     return true;
   }
 
   if (id === "order:time:custom_slot") {
     await writeChatState(from, "COLLECT_ORDER", context);
-    await sendTimeSlots(from, lang);
+    await sendListMessage(
+      from,
+      tr(lang, "اختر الفترة المناسبة 👇", "Choose time slot 👇"),
+      tr(lang, "الفترات", "Time Slots"),
+      getTimeSlotSections(lang)
+    );
     return true;
   }
 
@@ -591,14 +609,21 @@ async function handleInteractiveSelection({ from, id, lang, customer }) {
 
   if (id === "order:notes:add") {
     await writeChatState(from, "WAITING_NOTES", context);
-    await sendTextMessage(from, tr(lang, "أرسل الملاحظة من فضلك.", "Please send your note."));
+    await sendTextMessage(
+      from,
+      tr(lang, "أرسل الملاحظة من فضلك.", "Please send your note.")
+    );
     return true;
   }
 
   if (id === "final:confirm") {
     await sendTextMessage(
       from,
-      tr(lang, "رائع 🌿 تم تثبيت طلبك النهائي وبدأت إجراءات التنفيذ.", "Great. Your order has been confirmed and execution has started.")
+      tr(
+        lang,
+        "رائع 🌿 تم تثبيت طلبك النهائي وبدأت إجراءات التنفيذ.",
+        "Great. Your order has been confirmed and execution has started."
+      )
     );
     await writeChatState(from, "CUSTOMER_CONFIRMED", context);
     return true;
@@ -607,7 +632,11 @@ async function handleInteractiveSelection({ from, id, lang, customer }) {
   if (id === "final:modify") {
     await sendTextMessage(
       from,
-      tr(lang, "تم استلام طلب التعديل. سأعيدك الآن إلى مسار الطلب.", "Modification request received. Returning you to the order flow.")
+      tr(
+        lang,
+        "تم استلام طلب التعديل. سأعيدك الآن إلى مسار الطلب.",
+        "Modification request received. Returning you to the order flow."
+      )
     );
     await writeChatState(from, "VIEWING_ORDER_CATEGORIES", {});
     await sendOrderCategories(from, lang);
@@ -706,7 +735,10 @@ export async function processInboundText({ from, text }) {
     return { ok: true };
   }
 
-  if (!isInsideOperatingWindow() && /بدي|اريد|أريد|بدنا|طلب|مقلوبة|ورق عنب|ملفوف|كوسا|باذنجان|مفتول/i.test(cleaned)) {
+  if (
+    !isInsideOperatingWindow() &&
+    /بدي|اريد|أريد|بدنا|طلب|مقلوبة|ورق عنب|ملفوف|كوسا|باذنجان|مفتول/i.test(cleaned)
+  ) {
     await sendButtonsMessage(from, getOutOfHoursMessage(lang), [
       { id: "home:menu", title: tr(lang, "المنيو", "Menu") },
       { id: "home:start_order", title: tr(lang, "تسجيل مبدئي", "Save Draft") },
@@ -726,11 +758,7 @@ export async function processInboundText({ from, text }) {
 
   await sendButtonsMessage(
     from,
-    tr(
-      lang,
-      "يسعدني خدمتك. اختر الإجراء المناسب 👇",
-      "Choose the next action 👇"
-    ),
+    tr(lang, "يسعدني خدمتك. اختر الإجراء المناسب 👇", "Choose the next action 👇"),
     getHomeButtons(lang)
   );
 
@@ -747,7 +775,11 @@ export async function processInboundText({ from, text }) {
   return { ok: true };
 }
 
-export async function processInteractiveReply({ from, interactiveId, interactiveTitle = "" }) {
+export async function processInteractiveReply({
+  from,
+  interactiveId,
+  interactiveTitle = "",
+}) {
   const lang = detectLanguage(interactiveTitle || "مرحبا");
   const customer = await createCustomerIfMissing(from, null, lang);
 
