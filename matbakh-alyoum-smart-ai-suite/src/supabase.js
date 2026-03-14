@@ -44,14 +44,16 @@ export async function createCustomerIfMissing(
   const existing = await findCustomerByPhone(normalized);
   if (existing) return existing;
 
+  const now = new Date().toISOString();
+
   const payload = {
     phone: normalized,
     name,
     preferred_language: preferredLanguage,
     customer_status: "new",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    last_seen_at: new Date().toISOString(),
+    created_at: now,
+    updated_at: now,
+    last_seen_at: now,
     channel: "whatsapp",
     source_channel: "whatsapp",
     is_active_customer: true,
@@ -71,56 +73,21 @@ export async function createCustomerIfMissing(
   return data;
 }
 
-export async function logConversation({
-  customerId = null,
-  phone,
-  incomingText = null,
-  botReplyText = null,
-  messageType = "text",
-  detectedLanguage = "ar",
-  intent = null,
-}) {
-  const payload = {
-    customer_id: customerId,
-    message: incomingText || botReplyText || "",
-    direction: "inbound",
-    created_at: new Date().toISOString(),
-    msg_type: messageType,
-    wa_message_id: null,
-    media_id: null,
-    meta: {
-      phone_normalized: normalizePhone(phone),
-      source: "whatsapp",
-      bot_reply_text: botReplyText,
-    },
-    bot_reply_text: botReplyText,
-    intent,
-    detected_language: detectedLanguage,
-  };
-
-  const { error } = await supabase.from("conversations").insert(payload);
-
-  if (error) {
-    console.error("LOG_CONVERSATION_ERROR", error.message);
-  }
+/**
+ * أوقفنا التسجيل في conversations مؤقتًا لتثبيت التشغيل
+ * لأن جدول conversations عندك عليه check constraint غير محسوم الآن.
+ * لاحقًا نعيد تفعيله بعد قراءة القيمة الصحيحة لحقل direction.
+ */
+export async function logConversation(_payload) {
+  return true;
 }
 
+/**
+ * نعتمد customer_facts فقط بدل chat_state
+ * حتى نتفادى مشاكل primary key / onConflict / schema mismatch
+ */
 export async function readChatState(phone) {
   const normalized = normalizePhone(phone);
-
-  const primary = await supabase
-    .from("chat_state")
-    .select("*")
-    .eq("phone_normalized", normalized)
-    .limit(1)
-    .maybeSingle();
-
-  if (!primary.error && primary.data) {
-    return {
-      ...primary.data,
-      context: primary.data.context || primary.data.data || {},
-    };
-  }
 
   const fallback = await supabase
     .from("customer_facts")
@@ -134,7 +101,10 @@ export async function readChatState(phone) {
     return {
       phone_normalized: normalized,
       state: fallback.data.fact_value.state || "START",
-      context: fallback.data.fact_value.context || fallback.data.fact_value || {},
+      context:
+        fallback.data.fact_value.context ||
+        fallback.data.fact_value ||
+        {},
       updated_at: fallback.data.updated_at,
     };
   }
@@ -150,45 +120,7 @@ export async function writeChatState(phone, state, context = {}) {
   const normalized = normalizePhone(phone);
   const customer = await findCustomerByPhone(normalized);
 
-  const existing = await supabase
-    .from("chat_state")
-    .select("phone_normalized")
-    .eq("phone_normalized", normalized)
-    .limit(1)
-    .maybeSingle();
-
-  if (!existing.error && existing.data?.phone_normalized) {
-    const { error } = await supabase
-      .from("chat_state")
-      .update({
-        customer_id: customer?.id || null,
-        state,
-        context,
-        data: context,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("phone_normalized", normalized);
-
-    if (!error) return true;
-    console.error("WRITE_CHAT_STATE_UPDATE_ERROR", error.message);
-  } else {
-    const { error } = await supabase
-      .from("chat_state")
-      .insert({
-        customer_id: customer?.id || null,
-        phone_normalized: normalized,
-        state,
-        context,
-        data: context,
-        tries: 0,
-        updated_at: new Date().toISOString(),
-      });
-
-    if (!error) return true;
-    console.error("WRITE_CHAT_STATE_INSERT_ERROR", error.message);
-  }
-
-  const fallbackPayload = {
+  const payload = {
     customer_id: customer?.id || null,
     phone: normalized,
     fact_key: "chat_state",
@@ -201,20 +133,7 @@ export async function writeChatState(phone, state, context = {}) {
     updated_at: new Date().toISOString(),
   };
 
-  if (customer?.id) {
-    const { error } = await supabase
-      .from("customer_facts")
-      .upsert(fallbackPayload, { onConflict: "customer_id,fact_key" });
-
-    if (error) {
-      console.error("WRITE_CHAT_STATE_ERROR", error.message);
-      return false;
-    }
-
-    return true;
-  }
-
-  const existingFallback = await supabase
+  const existing = await supabase
     .from("customer_facts")
     .select("id")
     .eq("phone", normalized)
@@ -222,11 +141,11 @@ export async function writeChatState(phone, state, context = {}) {
     .limit(1)
     .maybeSingle();
 
-  if (!existingFallback.error && existingFallback.data?.id) {
+  if (!existing.error && existing.data?.id) {
     const { error } = await supabase
       .from("customer_facts")
-      .update(fallbackPayload)
-      .eq("id", existingFallback.data.id);
+      .update(payload)
+      .eq("id", existing.data.id);
 
     if (error) {
       console.error("WRITE_CHAT_STATE_ERROR", error.message);
@@ -238,7 +157,7 @@ export async function writeChatState(phone, state, context = {}) {
 
   const { error } = await supabase
     .from("customer_facts")
-    .insert(fallbackPayload);
+    .insert(payload);
 
   if (error) {
     console.error("WRITE_CHAT_STATE_ERROR", error.message);
@@ -266,15 +185,6 @@ export async function saveCustomerFact(phone, key, value) {
     updated_at: new Date().toISOString(),
   };
 
-  if (customer?.id) {
-    const { error } = await supabase
-      .from("customer_facts")
-      .upsert(payload, { onConflict: "customer_id,fact_key" });
-
-    if (error) console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
-    return;
-  }
-
   const existing = await supabase
     .from("customer_facts")
     .select("id")
@@ -289,13 +199,19 @@ export async function saveCustomerFact(phone, key, value) {
       .update(payload)
       .eq("id", existing.data.id);
 
-    if (error) console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
+    if (error) {
+      console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
+    }
     return;
   }
 
-  const { error } = await supabase.from("customer_facts").insert(payload);
+  const { error } = await supabase
+    .from("customer_facts")
+    .insert(payload);
 
-  if (error) console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
+  if (error) {
+    console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
+  }
 }
 
 export async function getKnowledgeAnswer(text) {
@@ -350,25 +266,51 @@ export async function createDraftOrder({
     ? { id: customerId }
     : await findCustomerByPhone(normalized);
 
+  const firstItem = Array.isArray(items) && items.length ? items[0] : {};
+  const now = new Date().toISOString();
+
+  const quantityNumber =
+    firstItem.quantity != null
+      ? Number(String(firstItem.quantity).replace(/[^\d.]/g, "")) || null
+      : null;
+
   const payload = {
     customer_id: customer?.id || null,
-    phone_normalized: normalized,
-    order_type: "whatsapp",
-    ramadan_meal_type: "iftar",
-    items_json: items,
-    subtotal,
+    customer_phone: normalized,
+
+    items,
+    subtotal: subtotal,
+    total: subtotal,
+
+    status: "awaiting_internal_review",
+    status_label: "بانتظار المراجعة الداخلية",
+
+    product: firstItem.dish || null,
+    protein: firstItem.protein || null,
+    meat_type: firstItem.protein === "لحم" ? "لحم" : null,
+    chicken_count: firstItem.protein === "دجاج" ? quantityNumber : null,
+    qty_meals: firstItem.protein !== "دجاج" ? String(firstItem.quantity || "") : null,
+
     delivery_area: deliveryArea,
+    area: deliveryArea,
+    delivery_area_name: deliveryArea,
     delivery_address: deliveryAddress,
-    delivery_fee: null,
-    final_total: null,
+
+    requested_time: requestedDeliveryTime,
+    delivery_time: requestedDeliveryTime,
+
     payment_method: paymentMethod,
-    requested_delivery_time: requestedDeliveryTime,
-    customer_notes: customerNotes,
-    approval_status: "pending_review",
-    customer_confirmation_status: "awaiting_customer_confirmation",
-    order_status: "awaiting_internal_review",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    customer_note: customerNotes,
+
+    channel: "whatsapp",
+    source_channel: "whatsapp",
+
+    approval_mode: CONFIG.orderFlow.approvalModeDefault || "manual_first",
+    approval_policy: "manual_first",
+    awaiting_customer_final_confirmation: true,
+
+    created_at: now,
+    updated_at: now,
   };
 
   const { data, error } = await supabase
