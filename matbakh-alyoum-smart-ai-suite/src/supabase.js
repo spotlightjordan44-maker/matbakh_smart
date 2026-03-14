@@ -1,4 +1,3 @@
-import { randomUUID } from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import { CONFIG } from "./config.js";
 
@@ -84,7 +83,7 @@ export async function logConversation({
   const payload = {
     customer_id: customerId,
     message: incomingText || botReplyText || "",
-    direction: "incoming",
+    direction: "inbound",
     created_at: new Date().toISOString(),
     msg_type: messageType,
     wa_message_id: null,
@@ -153,12 +152,12 @@ export async function writeChatState(phone, state, context = {}) {
 
   const existing = await supabase
     .from("chat_state")
-    .select("id")
+    .select("phone_normalized")
     .eq("phone_normalized", normalized)
     .limit(1)
     .maybeSingle();
 
-  if (!existing.error && existing.data?.id) {
+  if (!existing.error && existing.data?.phone_normalized) {
     const { error } = await supabase
       .from("chat_state")
       .update({
@@ -168,7 +167,7 @@ export async function writeChatState(phone, state, context = {}) {
         data: context,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", existing.data.id);
+      .eq("phone_normalized", normalized);
 
     if (!error) return true;
     console.error("WRITE_CHAT_STATE_UPDATE_ERROR", error.message);
@@ -176,7 +175,6 @@ export async function writeChatState(phone, state, context = {}) {
     const { error } = await supabase
       .from("chat_state")
       .insert({
-        id: randomUUID(),
         customer_id: customer?.id || null,
         phone_normalized: normalized,
         state,
