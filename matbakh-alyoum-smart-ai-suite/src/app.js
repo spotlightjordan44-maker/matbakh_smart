@@ -1,6 +1,11 @@
 import express from "express";
 import { CONFIG, isConfigured } from "./config.js";
-import { processCustomerConfirmation, processInboundText } from "./bot.js";
+import {
+  processCustomerConfirmation,
+  processInboundText,
+  processInteractiveReply,
+} from "./bot.js";
+import { extractIncomingMessage } from "./whatsapp-interactive.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -45,20 +50,36 @@ app.post("/webhook", async (req, res) => {
 
         for (const msg of messages) {
           const from = msg.from;
+          const incoming = extractIncomingMessage(msg);
 
-          if (msg.type === "text") {
-            const text = msg.text?.body || "";
-            const confirmed = await processCustomerConfirmation({ from, text });
+          if (!incoming) continue;
+
+          if (incoming.kind === "text") {
+            const confirmed = await processCustomerConfirmation({
+              from,
+              text: incoming.text,
+            });
+
             if (!confirmed) {
-              await processInboundText({ from, text });
+              await processInboundText({
+                from,
+                text: incoming.text,
+              });
             }
           }
 
-          // دعم أولي للرسائل الصوتية: لاحقًا نضيف transcription
-          if (msg.type === "audio") {
+          if (incoming.kind === "button" || incoming.kind === "list") {
+            await processInteractiveReply({
+              from,
+              interactiveId: incoming.id,
+              interactiveTitle: incoming.title || "",
+            });
+          }
+
+          if (incoming.kind === "audio") {
             await processInboundText({
               from,
-              text: "رسالة صوتية",
+              text: incoming.text,
             });
           }
         }
