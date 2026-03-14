@@ -13,12 +13,12 @@ function authHeaders() {
   };
 }
 
-function truncateTitle(text = "", max = 20) {
-  return String(text).trim().slice(0, max);
+function cut(text = "", max = 20) {
+  return String(text || "").trim().slice(0, max);
 }
 
-function truncateDesc(text = "", max = 72) {
-  return String(text).trim().slice(0, max);
+function cutDesc(text = "", max = 72) {
+  return String(text || "").trim().slice(0, max);
 }
 
 export async function sendTextMessage(to, body) {
@@ -29,7 +29,7 @@ export async function sendTextMessage(to, body) {
         messaging_product: "whatsapp",
         to: normalizePhone(to),
         type: "text",
-        text: { body },
+        text: { body: String(body || "").trim() || " " },
       },
       { headers: authHeaders() }
     );
@@ -40,12 +40,12 @@ export async function sendTextMessage(to, body) {
   }
 }
 
-export async function sendButtonsMessage(to, body, buttons = []) {
+export async function sendButtonsMessage(to, body, buttons = [], footer = null) {
   const safeButtons = buttons.slice(0, 3).map((btn) => ({
     type: "reply",
     reply: {
-      id: String(btn.id).slice(0, 256),
-      title: truncateTitle(btn.title, 20),
+      id: String(btn.id || "").slice(0, 256),
+      title: cut(btn.title || "", 20),
     },
   }));
 
@@ -58,7 +58,8 @@ export async function sendButtonsMessage(to, body, buttons = []) {
         type: "interactive",
         interactive: {
           type: "button",
-          body: { text: body },
+          body: { text: String(body || "").trim() || " " },
+          footer: footer ? { text: String(footer).trim() } : undefined,
           action: { buttons: safeButtons },
         },
       },
@@ -66,7 +67,10 @@ export async function sendButtonsMessage(to, body, buttons = []) {
     );
     return true;
   } catch (error) {
-    console.error("WA_BUTTONS_SEND_ERROR", error?.response?.data || error.message);
+    console.error(
+      "WA_BUTTONS_SEND_ERROR",
+      error?.response?.data || error.message
+    );
     return false;
   }
 }
@@ -79,14 +83,16 @@ export async function sendListMessage(
   headerText = null,
   footerText = null
 ) {
-  const safeSections = sections.map((section) => ({
-    title: truncateTitle(section.title || "الخيارات", 24),
-    rows: (section.rows || []).slice(0, 10).map((row) => ({
-      id: String(row.id).slice(0, 256),
-      title: truncateTitle(row.title, 24),
-      description: truncateDesc(row.description || "", 72),
-    })),
-  }));
+  const safeSections = sections
+    .map((section) => ({
+      title: cut(section.title || "الخيارات", 24),
+      rows: (section.rows || []).slice(0, 10).map((row) => ({
+        id: String(row.id || "").slice(0, 256),
+        title: cut(row.title || "", 24),
+        description: cutDesc(row.description || "", 72),
+      })),
+    }))
+    .filter((section) => section.rows.length > 0);
 
   try {
     await axios.post(
@@ -97,11 +103,11 @@ export async function sendListMessage(
         type: "interactive",
         interactive: {
           type: "list",
-          header: headerText ? { type: "text", text: headerText } : undefined,
-          body: { text: body },
-          footer: footerText ? { text: footerText } : undefined,
+          header: headerText ? { type: "text", text: String(headerText) } : undefined,
+          body: { text: String(body || "").trim() || " " },
+          footer: footerText ? { text: String(footerText) } : undefined,
           action: {
-            button: truncateTitle(buttonText || "اختر", 20),
+            button: cut(buttonText || "اختر", 20),
             sections: safeSections,
           },
         },
@@ -113,6 +119,103 @@ export async function sendListMessage(
     console.error("WA_LIST_SEND_ERROR", error?.response?.data || error.message);
     return false;
   }
+}
+
+export async function sendMainMenu(to, lang = "ar") {
+  const body =
+    lang === "en"
+      ? "Welcome to Matbakh Al Youm. Choose from the main menu 👇"
+      : "أهلاً وسهلاً بكم في مطبخ اليوم المركزي 🌙\nاختر من القائمة الرئيسية 👇";
+
+  const sections = [
+    {
+      title: lang === "en" ? "Main Menu" : "القائمة الرئيسية",
+      rows: [
+        {
+          id: "home:start_order",
+          title: lang === "en" ? "Start Order" : "ابدأ الطلب",
+          description: lang === "en" ? "Create a new order" : "ابدأ طلبًا جديدًا",
+        },
+        {
+          id: "home:menu",
+          title: lang === "en" ? "Menu & Prices" : "المنيو والأسعار",
+          description: lang === "en" ? "Browse menu items" : "عرض الأصناف والأسعار",
+        },
+        {
+          id: "home:offers",
+          title: lang === "en" ? "Offers" : "العروض",
+          description: lang === "en" ? "See active offers" : "عرض العروض الحالية",
+        },
+        {
+          id: "home:track",
+          title: lang === "en" ? "Track Order" : "تتبع الطلب",
+          description: lang === "en" ? "Check order status" : "متابعة حالة الطلب",
+        },
+        {
+          id: "home:support",
+          title: lang === "en" ? "Customer Support" : "خدمة العملاء",
+          description: lang === "en" ? "Get help" : "الاستفسارات والمساعدة",
+        },
+      ],
+    },
+  ];
+
+  return sendListMessage(
+    to,
+    body,
+    lang === "en" ? "Open" : "فتح",
+    sections,
+    null,
+    lang === "en"
+      ? "Use the buttons below for quick actions."
+      : "استخدم الأزرار بالأسفل للإجراءات السريعة."
+  );
+}
+
+export async function sendControlButtons(to, lang = "ar", body = null) {
+  return sendButtonsMessage(
+    to,
+    body ||
+      (lang === "en"
+        ? "Choose the next action 👇"
+        : "اختر الإجراء المناسب 👇"),
+    [
+      { id: "nav:back", title: lang === "en" ? "Back" : "رجوع" },
+      { id: "nav:handoff", title: lang === "en" ? "Employee" : "موظف" },
+      { id: "nav:exit", title: lang === "en" ? "Exit" : "خروج" },
+    ]
+  );
+}
+
+export async function sendHybridScreen({
+  to,
+  lang = "ar",
+  body,
+  listButtonText,
+  sections,
+  headerText = null,
+  footerText = null,
+}) {
+  const okList = await sendListMessage(
+    to,
+    body,
+    listButtonText,
+    sections,
+    headerText,
+    footerText
+  );
+
+  if (!okList) return false;
+
+  await sendControlButtons(
+    to,
+    lang,
+    lang === "en"
+      ? "Quick controls 👇"
+      : "أزرار التحكم السريعة 👇"
+  );
+
+  return true;
 }
 
 export function extractIncomingMessage(msg) {
@@ -149,6 +252,14 @@ export function extractIncomingMessage(msg) {
       kind: "audio",
       text: "رسالة صوتية",
       audioId: msg.audio?.id || null,
+    };
+  }
+
+  if (msg.type === "image") {
+    return {
+      kind: "image",
+      text: "صورة",
+      imageId: msg.image?.id || null,
     };
   }
 
