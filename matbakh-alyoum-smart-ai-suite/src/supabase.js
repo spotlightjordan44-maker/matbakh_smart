@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import { CONFIG } from "./config.js";
 
@@ -17,34 +18,22 @@ export function detectLanguage(text = "") {
   return /[\u0600-\u06FF]/.test(text) ? "ar" : "en";
 }
 
-async function ensureCustomerPhoneColumn(phone) {
+export async function findCustomerByPhone(phone) {
   const normalized = normalizePhone(phone);
 
-  // جدول customers عندك يحتوي phone وليس phone_normalized
-  // لذلك نبحث أولاً في phone، ثم نحاول phone_normalized احتياطياً إن وُجد لاحقاً
-  const byPhone = await supabase
+  const { data, error } = await supabase
     .from("customers")
     .select("*")
     .eq("phone", normalized)
     .limit(1)
     .maybeSingle();
 
-  if (!byPhone.error && byPhone.data) return byPhone.data;
+  if (error) {
+    console.error("FIND_CUSTOMER_ERROR", error.message);
+    return null;
+  }
 
-  const byAlt = await supabase
-    .from("customers")
-    .select("*")
-    .eq("phone_normalized", normalized)
-    .limit(1)
-    .maybeSingle();
-
-  if (!byAlt.error && byAlt.data) return byAlt.data;
-
-  return null;
-}
-
-export async function findCustomerByPhone(phone) {
-  return ensureCustomerPhoneColumn(phone);
+  return data || null;
 }
 
 export async function createCustomerIfMissing(
@@ -58,17 +47,15 @@ export async function createCustomerIfMissing(
 
   const payload = {
     phone: normalized,
+    name,
     preferred_language: preferredLanguage,
     customer_status: "new",
-    name,
-    display_name: name,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    last_seen_at: new Date().toISOString(),
     channel: "whatsapp",
-    contact_type: "customer",
     source_channel: "whatsapp",
     is_active_customer: true,
-    last_seen_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    created_at: new Date().toISOString(),
   };
 
   const { data, error } = await supabase
@@ -97,9 +84,11 @@ export async function logConversation({
   const payload = {
     customer_id: customerId,
     message: incomingText || botReplyText || "",
-    direction: incomingText ? "inbound" : "outbound",
+    direction: "incoming",
     created_at: new Date().toISOString(),
     msg_type: messageType,
+    wa_message_id: null,
+    media_id: null,
     meta: {
       phone_normalized: normalizePhone(phone),
       source: "whatsapp",
@@ -111,6 +100,7 @@ export async function logConversation({
   };
 
   const { error } = await supabase.from("conversations").insert(payload);
+
   if (error) {
     console.error("LOG_CONVERSATION_ERROR", error.message);
   }
@@ -129,10 +119,7 @@ export async function readChatState(phone) {
   if (!primary.error && primary.data) {
     return {
       ...primary.data,
-      context:
-        primary.data.context ||
-        primary.data.data ||
-        {},
+      context: primary.data.context || primary.data.data || {},
     };
   }
 
@@ -189,6 +176,7 @@ export async function writeChatState(phone, state, context = {}) {
     const { error } = await supabase
       .from("chat_state")
       .insert({
+        id: randomUUID(),
         customer_id: customer?.id || null,
         phone_normalized: normalized,
         state,
@@ -202,7 +190,6 @@ export async function writeChatState(phone, state, context = {}) {
     console.error("WRITE_CHAT_STATE_INSERT_ERROR", error.message);
   }
 
-  // fallback احتياطي
   const fallbackPayload = {
     customer_id: customer?.id || null,
     phone: normalized,
@@ -216,12 +203,10 @@ export async function writeChatState(phone, state, context = {}) {
     updated_at: new Date().toISOString(),
   };
 
-  // إذا كان customer_id موجودًا استخدم onConflict المعتاد
   if (customer?.id) {
-    const { error } = await supabase.from("customer_facts").upsert(
-      fallbackPayload,
-      { onConflict: "customer_id,fact_key" }
-    );
+    const { error } = await supabase
+      .from("customer_facts")
+      .upsert(fallbackPayload, { onConflict: "customer_id,fact_key" });
 
     if (error) {
       console.error("WRITE_CHAT_STATE_ERROR", error.message);
@@ -231,7 +216,6 @@ export async function writeChatState(phone, state, context = {}) {
     return true;
   }
 
-  // إذا لا يوجد customer_id، حدّث/أنشئ حسب phone
   const existingFallback = await supabase
     .from("customer_facts")
     .select("id")
@@ -289,9 +273,7 @@ export async function saveCustomerFact(phone, key, value) {
       .from("customer_facts")
       .upsert(payload, { onConflict: "customer_id,fact_key" });
 
-    if (error) {
-      console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
-    }
+    if (error) console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
     return;
   }
 
@@ -309,19 +291,13 @@ export async function saveCustomerFact(phone, key, value) {
       .update(payload)
       .eq("id", existing.data.id);
 
-    if (error) {
-      console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
-    }
+    if (error) console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
     return;
   }
 
-  const { error } = await supabase
-    .from("customer_facts")
-    .insert(payload);
+  const { error } = await supabase.from("customer_facts").insert(payload);
 
-  if (error) {
-    console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
-  }
+  if (error) console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
 }
 
 export async function getKnowledgeAnswer(text) {
