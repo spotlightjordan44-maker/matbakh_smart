@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://matbakh-alyoum.site/sitemap.xml
