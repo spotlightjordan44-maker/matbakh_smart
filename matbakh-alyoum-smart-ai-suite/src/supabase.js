@@ -17,30 +17,58 @@ export function detectLanguage(text = "") {
   return /[\u0600-\u06FF]/.test(text) ? "ar" : "en";
 }
 
-export async function findCustomerByPhone(phone) {
+async function ensureCustomerPhoneColumn(phone) {
   const normalized = normalizePhone(phone);
 
-  const { data, error } = await supabase
+  // جدول customers عندك يحتوي phone وليس phone_normalized
+  // لذلك نبحث أولاً في phone، ثم نحاول phone_normalized احتياطياً إن وُجد لاحقاً
+  const byPhone = await supabase
+    .from("customers")
+    .select("*")
+    .eq("phone", normalized)
+    .limit(1)
+    .maybeSingle();
+
+  if (!byPhone.error && byPhone.data) return byPhone.data;
+
+  const byAlt = await supabase
     .from("customers")
     .select("*")
     .eq("phone_normalized", normalized)
     .limit(1)
     .maybeSingle();
 
-  if (error) return null;
-  return data || null;
+  if (!byAlt.error && byAlt.data) return byAlt.data;
+
+  return null;
 }
 
-export async function createCustomerIfMissing(phone, name = null, preferredLanguage = "ar") {
+export async function findCustomerByPhone(phone) {
+  return ensureCustomerPhoneColumn(phone);
+}
+
+export async function createCustomerIfMissing(
+  phone,
+  name = null,
+  preferredLanguage = "ar"
+) {
   const normalized = normalizePhone(phone);
   const existing = await findCustomerByPhone(normalized);
   if (existing) return existing;
 
   const payload = {
-    phone_normalized: normalized,
+    phone: normalized,
     preferred_language: preferredLanguage,
     customer_status: "new",
     name,
+    display_name: name,
+    channel: "whatsapp",
+    contact_type: "customer",
+    source_channel: "whatsapp",
+    is_active_customer: true,
+    last_seen_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
   };
 
   const { data, error } = await supabase
@@ -68,14 +96,18 @@ export async function logConversation({
 }) {
   const payload = {
     customer_id: customerId,
-    phone_normalized: normalizePhone(phone),
-    channel: "whatsapp",
-    message_type: messageType,
-    incoming_text: incomingText,
-    bot_reply_text: botReplyText,
-    detected_language: detectedLanguage,
-    intent,
+    message: incomingText || botReplyText || "",
+    direction: incomingText ? "inbound" : "outbound",
     created_at: new Date().toISOString(),
+    msg_type: messageType,
+    meta: {
+      phone_normalized: normalizePhone(phone),
+      source: "whatsapp",
+      bot_reply_text: botReplyText,
+    },
+    bot_reply_text: botReplyText,
+    intent,
+    detected_language: detectedLanguage,
   };
 
   const { error } = await supabase.from("conversations").insert(payload);
@@ -87,7 +119,6 @@ export async function logConversation({
 export async function readChatState(phone) {
   const normalized = normalizePhone(phone);
 
-  // المحاولة الأولى: chat_state
   const primary = await supabase
     .from("chat_state")
     .select("*")
@@ -96,10 +127,15 @@ export async function readChatState(phone) {
     .maybeSingle();
 
   if (!primary.error && primary.data) {
-    return primary.data;
+    return {
+      ...primary.data,
+      context:
+        primary.data.context ||
+        primary.data.data ||
+        {},
+    };
   }
 
-  // fallback احتياطي: customer_facts
   const fallback = await supabase
     .from("customer_facts")
     .select("*")
@@ -112,7 +148,7 @@ export async function readChatState(phone) {
     return {
       phone_normalized: normalized,
       state: fallback.data.fact_value.state || "START",
-      context: fallback.data.fact_value,
+      context: fallback.data.fact_value.context || fallback.data.fact_value || {},
       updated_at: fallback.data.updated_at,
     };
   }
@@ -126,30 +162,101 @@ export async function readChatState(phone) {
 
 export async function writeChatState(phone, state, context = {}) {
   const normalized = normalizePhone(phone);
-  const payload = {
-    phone_normalized: normalized,
-    state,
-    context,
+  const customer = await findCustomerByPhone(normalized);
+
+  const existing = await supabase
+    .from("chat_state")
+    .select("id")
+    .eq("phone_normalized", normalized)
+    .limit(1)
+    .maybeSingle();
+
+  if (!existing.error && existing.data?.id) {
+    const { error } = await supabase
+      .from("chat_state")
+      .update({
+        customer_id: customer?.id || null,
+        state,
+        context,
+        data: context,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.data.id);
+
+    if (!error) return true;
+    console.error("WRITE_CHAT_STATE_UPDATE_ERROR", error.message);
+  } else {
+    const { error } = await supabase
+      .from("chat_state")
+      .insert({
+        customer_id: customer?.id || null,
+        phone_normalized: normalized,
+        state,
+        context,
+        data: context,
+        tries: 0,
+        updated_at: new Date().toISOString(),
+      });
+
+    if (!error) return true;
+    console.error("WRITE_CHAT_STATE_INSERT_ERROR", error.message);
+  }
+
+  // fallback احتياطي
+  const fallbackPayload = {
+    customer_id: customer?.id || null,
+    phone: normalized,
+    fact_key: "chat_state",
+    fact_value: {
+      state,
+      context,
+    },
+    source: "bot",
+    confidence: 0.9,
     updated_at: new Date().toISOString(),
   };
 
-  const primary = await supabase
-    .from("chat_state")
-    .upsert(payload, { onConflict: "phone_normalized" });
+  // إذا كان customer_id موجودًا استخدم onConflict المعتاد
+  if (customer?.id) {
+    const { error } = await supabase.from("customer_facts").upsert(
+      fallbackPayload,
+      { onConflict: "customer_id,fact_key" }
+    );
 
-  if (!primary.error) return true;
+    if (error) {
+      console.error("WRITE_CHAT_STATE_ERROR", error.message);
+      return false;
+    }
 
-  // fallback احتياطي
-  const { error } = await supabase.from("customer_facts").upsert(
-    {
-      phone: normalized,
-      fact_key: "chat_state",
-      fact_value: { state, ...context },
-      source: "bot",
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "phone,fact_key" }
-  );
+    return true;
+  }
+
+  // إذا لا يوجد customer_id، حدّث/أنشئ حسب phone
+  const existingFallback = await supabase
+    .from("customer_facts")
+    .select("id")
+    .eq("phone", normalized)
+    .eq("fact_key", "chat_state")
+    .limit(1)
+    .maybeSingle();
+
+  if (!existingFallback.error && existingFallback.data?.id) {
+    const { error } = await supabase
+      .from("customer_facts")
+      .update(fallbackPayload)
+      .eq("id", existingFallback.data.id);
+
+    if (error) {
+      console.error("WRITE_CHAT_STATE_ERROR", error.message);
+      return false;
+    }
+
+    return true;
+  }
+
+  const { error } = await supabase
+    .from("customer_facts")
+    .insert(fallbackPayload);
 
   if (error) {
     console.error("WRITE_CHAT_STATE_ERROR", error.message);
@@ -177,11 +284,44 @@ export async function saveCustomerFact(phone, key, value) {
     updated_at: new Date().toISOString(),
   };
 
+  if (customer?.id) {
+    const { error } = await supabase
+      .from("customer_facts")
+      .upsert(payload, { onConflict: "customer_id,fact_key" });
+
+    if (error) {
+      console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
+    }
+    return;
+  }
+
+  const existing = await supabase
+    .from("customer_facts")
+    .select("id")
+    .eq("phone", normalized)
+    .eq("fact_key", key)
+    .limit(1)
+    .maybeSingle();
+
+  if (!existing.error && existing.data?.id) {
+    const { error } = await supabase
+      .from("customer_facts")
+      .update(payload)
+      .eq("id", existing.data.id);
+
+    if (error) {
+      console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
+    }
+    return;
+  }
+
   const { error } = await supabase
     .from("customer_facts")
-    .upsert(payload, { onConflict: "customer_id,fact_key" });
+    .insert(payload);
 
-  if (error) console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
+  if (error) {
+    console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
+  }
 }
 
 export async function getKnowledgeAnswer(text) {
@@ -231,9 +371,14 @@ export async function createDraftOrder({
   requestedDeliveryTime = null,
   customerNotes = null,
 }) {
+  const normalized = normalizePhone(phone);
+  const customer = customerId
+    ? { id: customerId }
+    : await findCustomerByPhone(normalized);
+
   const payload = {
-    customer_id: customerId,
-    phone_normalized: normalizePhone(phone),
+    customer_id: customer?.id || null,
+    phone_normalized: normalized,
     order_type: "whatsapp",
     ramadan_meal_type: "iftar",
     items_json: items,
