@@ -43,6 +43,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     const entries = body.entry || [];
+
     for (const entry of entries) {
       for (const change of entry.changes || []) {
         const value = change.value || {};
@@ -52,7 +53,7 @@ app.post("/webhook", async (req, res) => {
           const from = msg.from;
           const incoming = extractIncomingMessage(msg);
 
-          if (!incoming) continue;
+          if (!from || !incoming) continue;
 
           if (incoming.kind === "text") {
             const confirmed = await processCustomerConfirmation({
@@ -79,7 +80,21 @@ app.post("/webhook", async (req, res) => {
           if (incoming.kind === "audio") {
             await processInboundText({
               from,
-              text: incoming.text,
+              text: incoming.text || "رسالة صوتية",
+            });
+          }
+
+          if (incoming.kind === "image") {
+            await processInboundText({
+              from,
+              text: "صورة",
+            });
+          }
+
+          if (incoming.kind === "unsupported") {
+            await processInboundText({
+              from,
+              text: "",
             });
           }
         }
