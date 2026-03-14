@@ -21,57 +21,81 @@ function cleanText(text = "") {
   return String(text).replace(/\s+/g, " ").trim();
 }
 
+function splitCombinedMessage(text = "") {
+  return String(text)
+    .split(/\n+/)
+    .map((s) => cleanText(s))
+    .filter(Boolean);
+}
+
 function isGreeting(text = "") {
-  return /^(مرحبا|السلام عليكم|هلا|أهلا|اهلا|hi|hello)/i.test(cleanText(text));
+  return /^(مرحبا|السلام عليكم|هلا|أهلا|اهلا|hello|hi)\b/i.test(cleanText(text));
 }
 
 function isOrderIntent(text = "") {
-  return /(بدي|اريد|أريد|بدنا|طلب|اطلب|مقلوبة|ورق عنب|ملفوف|كوسا|باذنجان|مفتول)/i.test(
+  return /(بدي|اريد|أريد|بدنا|طلب|اطلب|مقلوبة|ورق عنب|ملفوف|كوسا|باذنجان|مفتول|يالنجي|محاشي)/i.test(
     cleanText(text)
   );
 }
 
 function parseDish(text = "") {
   const t = cleanText(text);
+
   if (/مقلوبة/i.test(t)) return "مقلوبة";
   if (/ورق عنب/i.test(t)) return "ورق عنب";
   if (/ملفوف/i.test(t)) return "ملفوف";
   if (/كوسا/i.test(t)) return "كوسا";
   if (/باذنجان/i.test(t)) return "باذنجان";
   if (/مفتول/i.test(t)) return "مفتول";
+  if (/يالنجي/i.test(t)) return "يالنجي";
+  if (/محاشي/i.test(t)) return "محاشي";
+
   return null;
 }
 
 function parseProtein(text = "") {
   const t = cleanText(text);
-  if (/دجاج/i.test(t)) return "دجاج";
-  if (/لحم/i.test(t)) return "لحم";
+
+  if (/دجاج|جاج|جاجة|جاجتين|دجاجة|دجاجتين/i.test(t)) return "دجاج";
+  if (/لحم|لحمة/i.test(t)) return "لحم";
+
   return null;
 }
 
 function parseQuantity(text = "") {
   const t = cleanText(text);
-  const match = t.match(/(\d+(?:\.\d+)?)\s*(كيلو|وجبة|صحن|حبة)?/);
+
+  if (/جاجتين|دجاجتين/i.test(t)) return "2 دجاج";
+  if (/جاجة|دجاجة/i.test(t)) return "1 دجاج";
+
+  const match = t.match(/(\d+(?:\.\d+)?)\s*(كيلو|وجبة|صحن|حبة|حبات)?/);
   if (!match) return null;
+
   return match[2] ? `${match[1]} ${match[2]}` : match[1];
 }
 
 function parsePaymentMethod(text = "") {
   const t = cleanText(text);
+
   if (/كاش|نقد/i.test(t)) return "cash";
   if (/كليك|تحويل|بطاقة|فيزا/i.test(t)) return "electronic";
+
   return null;
 }
 
 function classifyIntent(text = "") {
   const t = cleanText(text);
 
-  if (isGreeting(t)) return "greeting";
-  if (/منيو|شو عندكم|الاصناف|الأصناف/i.test(t)) return "view_menu";
+  if (/منيو|شو عندكم|شو في|شو موجود|الاصناف|الأصناف|اعرف شو في|بدي منيو/i.test(t)) {
+    return "view_menu";
+  }
+
   if (/سعر|كم|بكم/i.test(t)) return "ask_price";
   if (/توصيل|دليفري|يوصل/i.test(t)) return "ask_delivery";
   if (/موقع|عنوان|وين/i.test(t)) return "ask_location";
   if (isOrderIntent(t)) return "order_food";
+  if (isGreeting(t)) return "greeting";
+
   return "general";
 }
 
@@ -112,6 +136,14 @@ function getRamadanMessage(lang = "ar") {
 خلال شهر رمضان المبارك، البيع الحالي لدينا مخصص لوجبة الإفطار فقط.
 يسعدني مساعدتك في اختيار الأصناف المناسبة للإفطار واستكمال الطلب معك.`,
     `During Ramadan, current sales are limited to iftar meals only.`
+  );
+}
+
+function getMenuMessage(lang = "ar") {
+  return tr(
+    lang,
+    "الأصناف المتوفرة حاليًا تشمل: مقلوبة، ورق عنب، ملفوف، كوسا، باذنجان، مفتول. اكتب الصنف الذي ترغب به وسأكمل معك الطلب.",
+    "Available dishes include maqluba, grape leaves, cabbage rolls, zucchini, eggplant, and maftoul."
   );
 }
 
@@ -193,8 +225,15 @@ function nextQuestion(context, lang = "ar") {
     return tr(lang, "ما الصنف الذي ترغب به؟", "Which dish would you like?");
   }
 
-  if (context.dish === "مقلوبة" && !context.protein) {
-    return tr(lang, "هل تفضل المقلوبة على دجاج أم لحم؟", "Do you prefer chicken or meat?");
+  if (
+    (context.dish === "مقلوبة" || context.dish === "محاشي") &&
+    !context.protein
+  ) {
+    return tr(
+      lang,
+      "هل تفضل الطلب على دجاج أم لحم؟",
+      "Do you prefer chicken or meat?"
+    );
   }
 
   if (!context.quantity) {
@@ -214,18 +253,34 @@ function nextQuestion(context, lang = "ar") {
   }
 
   if (!context.paymentMethod) {
-    return tr(lang, "ما طريقة الدفع المناسبة؟ كاش أم تحويل؟", "Preferred payment method: cash or transfer?");
+    return tr(
+      lang,
+      "ما طريقة الدفع المناسبة؟ كاش أم تحويل؟",
+      "Preferred payment method: cash or transfer?"
+    );
   }
 
   return null;
 }
 
-export async function processInboundText({ from, text }) {
-  const lang = detectLanguage(text);
-  const intent = classifyIntent(text);
+function getKnowledgeOrSmartReply(text, lang = "ar") {
+  const t = cleanText(text);
 
-  const customer = await createCustomerIfMissing(from, null, lang);
-  const stateRow = await readChatState(from);
+  if (/منيو|شو عندكم|شو في|شو موجود|اعرف شو في|بدي منيو/i.test(t)) {
+    return getMenuMessage(lang);
+  }
+
+  return null;
+}
+
+async function processSingleMessage({
+  from,
+  text,
+  customer,
+  stateRow,
+  lang,
+}) {
+  const intent = classifyIntent(text);
   const currentContext = stateRow?.context || {};
   const mergedContext = mergeContext(currentContext, text);
 
@@ -235,21 +290,29 @@ export async function processInboundText({ from, text }) {
     reply = getWelcomeMessage(lang);
     await writeChatState(from, "START", currentContext);
   } else {
-    const knowledge = await getKnowledgeAnswer(text);
-    if (knowledge && intent !== "order_food") {
-      reply = knowledge;
+    const smartReply = getKnowledgeOrSmartReply(text, lang);
+    if (smartReply) {
+      reply = smartReply;
+    } else {
+      const knowledge = await getKnowledgeAnswer(text);
+      if (knowledge && intent !== "order_food") {
+        reply = knowledge;
+      }
     }
   }
 
-  if (!reply && !isInsideOperatingWindow()) {
+  // خارج الوقت: يطبّق فقط على الطلب، وليس على المنيو أو الأسئلة العامة
+  if (!reply && intent === "order_food" && !isInsideOperatingWindow()) {
     reply = getOutOfHoursMessage(lang);
   }
 
   if (!reply && CONFIG.orderFlow.ramadanIftarOnly) {
-    // هنا نُبقي الرسالة ناعمة فقط عند بدء الطلب
     if (intent === "order_food" && !currentContext.ramadanNoticeShown) {
       mergedContext.ramadanNoticeShown = true;
-      reply = `${getRamadanMessage(lang)}\n\n${nextQuestion(mergedContext, lang) || ""}`.trim();
+
+      if (isInsideOperatingWindow()) {
+        reply = `${getRamadanMessage(lang)}\n\n${nextQuestion(mergedContext, lang) || ""}`.trim();
+      }
     }
   }
 
@@ -262,11 +325,7 @@ export async function processInboundText({ from, text }) {
   }
 
   if (!reply && intent === "view_menu") {
-    reply = tr(
-      lang,
-      "الأصناف المتوفرة حاليًا تشمل: مقلوبة، ورق عنب، ملفوف، كوسا، باذنجان، مفتول. اكتب الصنف الذي ترغب به وسأكمل معك الطلب.",
-      "Available dishes include maqluba, grape leaves, cabbage rolls, zucchini, eggplant, and maftoul."
-    );
+    reply = getMenuMessage(lang);
   }
 
   if (!reply && intent === "order_food") {
@@ -327,8 +386,6 @@ export async function processInboundText({ from, text }) {
     );
   }
 
-  await sendWhatsAppText(from, reply);
-
   await logConversation({
     customerId: customer?.id || null,
     phone: from,
@@ -339,11 +396,46 @@ export async function processInboundText({ from, text }) {
     intent,
   });
 
-  return { ok: true, reply };
+  return { reply, intent };
+}
+
+export async function processInboundText({ from, text }) {
+  const lang = detectLanguage(text);
+  const customer = await createCustomerIfMissing(from, null, lang);
+  let stateRow = await readChatState(from);
+
+  const parts = splitCombinedMessage(text);
+  const messages = parts.length ? parts : [cleanText(text)];
+
+  let lastReply = null;
+
+  for (const msg of messages) {
+    const result = await processSingleMessage({
+      from,
+      text: msg,
+      customer,
+      stateRow,
+      lang,
+    });
+
+    lastReply = result.reply;
+    stateRow = await readChatState(from);
+  }
+
+  if (!lastReply) {
+    lastReply = tr(
+      lang,
+      "يسعدني خدمتك. كيف يمكنني مساعدتك اليوم؟",
+      "How can I help you today?"
+    );
+  }
+
+  await sendWhatsAppText(from, lastReply);
+
+  return { ok: true, reply: lastReply };
 }
 
 export async function processCustomerConfirmation({ from, text }) {
-  const lang = detectLanguage(text);
   const stateRow = await readChatState(from);
 
   if (stateRow?.state !== "APPROVED_PENDING_CUSTOMER_CONFIRMATION") {
@@ -364,6 +456,7 @@ export async function processCustomerConfirmation({ from, text }) {
     from,
     "تم تأكيد طلبك بنجاح. نعمل الآن على متابعته حتى التسليم، وسأبقيك على اطلاع بحالة الطلب."
   );
+
   return true;
 }
 
