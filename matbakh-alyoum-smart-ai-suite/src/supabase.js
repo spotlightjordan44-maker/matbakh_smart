@@ -5,7 +5,10 @@ export const supabase = createClient(
   CONFIG.supabase.url,
   CONFIG.supabase.serviceRoleKey,
   {
-    auth: { autoRefreshToken: false, persistSession: false },
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
   }
 );
 
@@ -49,14 +52,17 @@ export async function createCustomerIfMissing(
   const payload = {
     phone: normalized,
     name,
+    display_name: name,
     preferred_language: preferredLanguage,
     customer_status: "new",
+    channel: "whatsapp",
+    source_channel: "whatsapp",
+    channel_user_id: normalized,
+    is_active_customer: true,
     created_at: now,
     updated_at: now,
     last_seen_at: now,
-    channel: "whatsapp",
-    source_channel: "whatsapp",
-    is_active_customer: true,
+    last_incoming_at: now,
   };
 
   const { data, error } = await supabase
@@ -74,22 +80,21 @@ export async function createCustomerIfMissing(
 }
 
 /**
- * أوقفنا التسجيل في conversations مؤقتًا لتثبيت التشغيل
- * لأن جدول conversations عندك عليه check constraint غير محسوم الآن.
- * لاحقًا نعيد تفعيله بعد قراءة القيمة الصحيحة لحقل direction.
+ * معطل مؤقتًا لتثبيت التشغيل
+ * لأن جدول conversations عنده قيود غير محسومة حاليًا
  */
 export async function logConversation(_payload) {
   return true;
 }
 
 /**
- * نعتمد customer_facts فقط بدل chat_state
- * حتى نتفادى مشاكل primary key / onConflict / schema mismatch
+ * نعتمد customer_facts كذاكرة المحادثة الرسمية
+ * بدل chat_state لتفادي مشاكل المفاتيح والقيود الحالية
  */
 export async function readChatState(phone) {
   const normalized = normalizePhone(phone);
 
-  const fallback = await supabase
+  const { data, error } = await supabase
     .from("customer_facts")
     .select("*")
     .eq("phone", normalized)
@@ -97,15 +102,16 @@ export async function readChatState(phone) {
     .limit(1)
     .maybeSingle();
 
-  if (!fallback.error && fallback.data?.fact_value) {
+  if (error) {
+    console.error("READ_CHAT_STATE_ERROR", error.message);
+  }
+
+  if (data?.fact_value) {
     return {
       phone_normalized: normalized,
-      state: fallback.data.fact_value.state || "START",
-      context:
-        fallback.data.fact_value.context ||
-        fallback.data.fact_value ||
-        {},
-      updated_at: fallback.data.updated_at,
+      state: data.fact_value.state || "START",
+      context: data.fact_value.context || {},
+      updated_at: data.updated_at || null,
     };
   }
 
@@ -113,6 +119,7 @@ export async function readChatState(phone) {
     phone_normalized: normalized,
     state: "START",
     context: {},
+    updated_at: null,
   };
 }
 
@@ -127,9 +134,10 @@ export async function writeChatState(phone, state, context = {}) {
     fact_value: {
       state,
       context,
+      last_activity_at: new Date().toISOString(),
     },
     source: "bot",
-    confidence: 0.9,
+    confidence: 0.99,
     updated_at: new Date().toISOString(),
   };
 
@@ -155,9 +163,7 @@ export async function writeChatState(phone, state, context = {}) {
     return true;
   }
 
-  const { error } = await supabase
-    .from("customer_facts")
-    .insert(payload);
+  const { error } = await supabase.from("customer_facts").insert(payload);
 
   if (error) {
     console.error("WRITE_CHAT_STATE_ERROR", error.message);
@@ -181,7 +187,7 @@ export async function saveCustomerFact(phone, key, value) {
     fact_key: key,
     fact_value: value,
     source: "bot",
-    confidence: 0.9,
+    confidence: 0.95,
     updated_at: new Date().toISOString(),
   };
 
@@ -205,9 +211,7 @@ export async function saveCustomerFact(phone, key, value) {
     return;
   }
 
-  const { error } = await supabase
-    .from("customer_facts")
-    .insert(payload);
+  const { error } = await supabase.from("customer_facts").insert(payload);
 
   if (error) {
     console.error("SAVE_CUSTOMER_FACT_ERROR", error.message);
@@ -216,6 +220,8 @@ export async function saveCustomerFact(phone, key, value) {
 
 export async function getKnowledgeAnswer(text) {
   const cleaned = String(text || "").trim();
+
+  if (!cleaned) return null;
 
   const exact = await supabase
     .from("bot_knowledge_entries")
@@ -226,15 +232,18 @@ export async function getKnowledgeAnswer(text) {
     .limit(1)
     .maybeSingle();
 
-  if (!exact.error && exact.data?.answer) return exact.data.answer;
+  if (!exact.error && exact.data?.answer) {
+    return exact.data.answer;
+  }
 
   const keywordsMap = [
     { test: /مطبوخ/, q: "هل الأكل مطبوخ؟" },
     { test: /موقع|عنوان|وين/, q: "وين موقعكم؟" },
     { test: /توصيل|دليفري|يوصل/, q: "هل يوجد توصيل؟" },
+    { test: /منيو|شو عندكم|شو في|الأصناف|الاصناف/, q: "ما هي الأصناف المتوفرة؟" },
   ];
 
-  const matched = keywordsMap.find((k) => k.test.test(cleaned));
+  const matched = keywordsMap.find((item) => item.test.test(cleaned));
   if (!matched) return null;
 
   const mapped = await supabase
@@ -246,8 +255,100 @@ export async function getKnowledgeAnswer(text) {
     .limit(1)
     .maybeSingle();
 
-  if (!mapped.error && mapped.data?.answer) return mapped.data.answer;
+  if (!mapped.error && mapped.data?.answer) {
+    return mapped.data.answer;
+  }
+
   return null;
+}
+
+export async function getMenuCategories() {
+  const { data, error } = await supabase
+    .from("menu_categories")
+    .select("*")
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true });
+
+  if (error) {
+    console.error("GET_MENU_CATEGORIES_ERROR", error.message);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function getMenuItemsByCategory(categoryKeyOrId) {
+  let query = supabase
+    .from("menu_items")
+    .select("*")
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true });
+
+  if (
+    typeof categoryKeyOrId === "string" &&
+    categoryKeyOrId &&
+    !/^\d+$/.test(categoryKeyOrId)
+  ) {
+    query = query.eq("category_key", categoryKeyOrId);
+  } else {
+    query = query.eq("category_id", categoryKeyOrId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("GET_MENU_ITEMS_BY_CATEGORY_ERROR", error.message);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function getMenuItemByKey(itemKey) {
+  const { data, error } = await supabase
+    .from("menu_items")
+    .select("*")
+    .eq("item_key", itemKey)
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("GET_MENU_ITEM_BY_KEY_ERROR", error.message);
+    return null;
+  }
+
+  return data || null;
+}
+
+export async function getActiveOffers() {
+  const { data, error } = await supabase
+    .from("sales_offers")
+    .select("*")
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true });
+
+  if (error) {
+    console.error("GET_ACTIVE_OFFERS_ERROR", error.message);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function getDeliveryZones() {
+  const { data, error } = await supabase
+    .from("delivery_zones")
+    .select("*")
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true });
+
+  if (error) {
+    console.error("GET_DELIVERY_ZONES_ERROR", error.message);
+    return [];
+  }
+
+  return data || [];
 }
 
 export async function createDraftOrder({
@@ -282,14 +383,17 @@ export async function createDraftOrder({
     subtotal: subtotal,
     total: subtotal,
 
-    status: "awaiting_internal_review",
-    status_label: "بانتظار المراجعة الداخلية",
+    status: "pending",
+    status_label: "بانتظار المراجعة",
 
     product: firstItem.dish || null,
     protein: firstItem.protein || null,
     meat_type: firstItem.protein === "لحم" ? "لحم" : null,
     chicken_count: firstItem.protein === "دجاج" ? quantityNumber : null,
-    qty_meals: firstItem.protein !== "دجاج" ? String(firstItem.quantity || "") : null,
+    qty_meals:
+      firstItem.protein !== "دجاج" && firstItem.quantity != null
+        ? String(firstItem.quantity)
+        : null,
 
     delivery_area: deliveryArea,
     area: deliveryArea,
@@ -301,6 +405,7 @@ export async function createDraftOrder({
 
     payment_method: paymentMethod,
     customer_note: customerNotes,
+    notes: customerNotes,
 
     channel: "whatsapp",
     source_channel: "whatsapp",
@@ -325,4 +430,23 @@ export async function createDraftOrder({
   }
 
   return data;
+}
+
+export async function getLastOpenDraftOrder(phone) {
+  const normalized = normalizePhone(phone);
+
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("customer_phone", normalized)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("GET_LAST_OPEN_DRAFT_ORDER_ERROR", error.message);
+    return null;
+  }
+
+  return data || null;
 }
