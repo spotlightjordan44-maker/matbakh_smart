@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: matbakh-smart-center
+    env: node
+    plan: starter
+    autoDeploy: true
+    rootDir: .
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: TIMEZONE
+        value: Asia/Amman
+      - key: APP_NAME
+        value: Matbakh Al Youm Smart Center
+      - key: BUSINESS_NAME
+        value: مطبخ اليوم المركزي
+      - key: BUSINESS_PHONE
+        value: "962779960015"
+      - key: BUSINESS_EMAIL
+        value: info@matbakh-alyoum.site
+      - key: BUSINESS_WEBSITE
+        value: https://www.matbakh-alyoum.site
+      - key: ADMIN_NUMBERS
+        value: 962788328832,962799080840,96279960405
+      - key: PAYMENT_METHODS
+        value: cash,cliq,wallet
+      - key: DELIVERY_AREAS
+        value: all_jordan
+      - key: DELIVERY_FEE_VISIBLE
+        value: "false"
+      - key: ALLOW_LOCATION
+        value: "false"
+      - key: MIN_ORDER
+        value: "0"
+      - key: ENABLE_CAMPAIGNS
+        value: "true"
+      - key: ENABLE_REORDER_LAST
+        value: "false"
+      - key: VOICE_MODE
+        value: auto_text_voice
+      - key: META_API_VERSION
+        value: v23.0
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
